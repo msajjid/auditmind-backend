@@ -1,0 +1,321 @@
+<div class="page" *ngIf="authToken; else authPanel">
+  <header class="hero card">
+    <div class="hero-main">
+      <div class="eyebrow">Audit pipelines · live</div>
+      <h1>{{ title }}</h1>
+      <p class="subdued">
+        Upload evidence, watch the classification pipeline run, and keep outputs organized per organization.
+        The dashboard proxies requests to the Django API at <code>/api</code>.
+      </p>
+      <div class="stat-row">
+        <div class="stat">
+          <div class="stat-value">{{ organizations.length }}</div>
+          <div class="stat-label">Organizations</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">{{ evidenceList.length }}</div>
+          <div class="stat-label">Evidence items</div>
+        </div>
+        <div class="stat">
+          <div class="stat-value">{{ classifiedCount }}</div>
+          <div class="stat-label">Classified</div>
+        </div>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <div class="user-pill">
+        <div class="subdued">Signed in as</div>
+        <div class="org-name">{{ currentUser?.email }}</div>
+        <button class="btn-ghost" (click)="logout()">Sign out</button>
+      </div>
+      <label class="subdued">Active organization</label>
+      <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+        <option value="" disabled>Select organization</option>
+        <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+      </select>
+      <div class="hero-buttons">
+        <button class="btn-ghost" (click)="loadOrganizations()" [disabled]="loading.orgs">
+          {{ loading.orgs ? 'Refreshing…' : 'Reload orgs' }}
+        </button>
+        <button class="btn-ghost" (click)="loadEvidence()" [disabled]="loading.evidence || !selectedOrgId">
+          {{ loading.evidence ? 'Loading…' : 'Reload evidence' }}
+        </button>
+      </div>
+      <div class="hint">
+        Use the proxy-config dev server so API calls stay same-origin: <code>npm start</code> (port 4200 → 8000).
+      </div>
+    </div>
+  </header>
+
+  <div *ngIf="toast" class="toast" [ngClass]="toast.kind">{{ toast.message }}</div>
+
+  <section class="grid two-col">
+    <div class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Organizations</p>
+          <h3>Manage tenants</h3>
+        </div>
+        <span class="chip" *ngIf="organizations.length">{{ organizations.length }} active</span>
+      </div>
+      <div class="org-list" *ngIf="organizations.length; else emptyOrg">
+        <div
+          *ngFor="let org of organizations; trackBy: trackOrgById"
+          (click)="selectOrg(org.id)"
+          [class.active]="org.id === selectedOrgId"
+          class="org-item"
+        >
+          <div>
+            <div class="org-name">{{ org.name }}</div>
+            <div class="subdued">{{ org.domain || 'No domain' }}</div>
+          </div>
+          <span class="chip">{{ org.plan || 'free' }}</span>
+        </div>
+      </div>
+      <ng-template #emptyOrg>
+        <p class="subdued">No organizations yet. Create one to start uploading evidence.</p>
+      </ng-template>
+
+      <form class="form" *ngIf="isAdminForOrg()" [formGroup]="orgForm" (ngSubmit)="submitOrganization()">
+        <div class="form-row two-col">
+          <div>
+            <label>Name</label>
+            <input class="input" formControlName="name" placeholder="Acme Corp" />
+          </div>
+          <div>
+            <label>Domain</label>
+            <input class="input" formControlName="domain" placeholder="acme.com" />
+          </div>
+        </div>
+        <div class="form-row two-col">
+          <div>
+            <label>Industry</label>
+            <input class="input" formControlName="industry" placeholder="SaaS, Fintech" />
+          </div>
+          <div>
+            <label>Plan</label>
+            <input class="input" formControlName="plan" placeholder="free / pro" />
+          </div>
+        </div>
+        <button class="btn-primary" type="submit" [disabled]="loading.createOrg">
+          {{ loading.createOrg ? 'Creating…' : 'Create organization' }}
+        </button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Evidence intake</p>
+          <h3>Upload + classify</h3>
+        </div>
+        <span class="chip" *ngIf="selectedOrgId">Org selected</span>
+      </div>
+      <form class="form" [formGroup]="evidenceForm" (ngSubmit)="submitEvidence()">
+        <div class="mode-toggle">
+          <button
+            type="button"
+            class="btn-ghost"
+            [class.active]="evidenceForm.value.rawMode === 'text'"
+            (click)="evidenceForm.patchValue({ rawMode: 'text' })"
+          >
+            Raw text
+          </button>
+          <button
+            type="button"
+            class="btn-ghost"
+            [class.active]="evidenceForm.value.rawMode === 'json'"
+            (click)="evidenceForm.patchValue({ rawMode: 'json' })"
+          >
+            JSON payload
+          </button>
+        </div>
+
+        <div *ngIf="evidenceForm.value.rawMode === 'text'">
+          <label>Raw text</label>
+          <textarea class="input" formControlName="raw_text" placeholder="Paste log lines or notes"></textarea>
+        </div>
+        <div *ngIf="evidenceForm.value.rawMode === 'json'">
+          <label>Raw JSON</label>
+          <textarea
+            class="input"
+            formControlName="raw_json"
+            placeholder='{"resource": "arn:aws:s3:::..."}'
+          ></textarea>
+          <div class="error" *ngIf="rawJsonError">{{ rawJsonError }}</div>
+        </div>
+
+        <button class="btn-primary" type="submit" [disabled]="loading.upload">
+          {{ loading.upload ? 'Uploading…' : 'Upload + classify' }}
+        </button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card pipeline-card">
+    <div class="section-header">
+      <div>
+        <p class="eyebrow">Pipeline monitor</p>
+        <h3>Recent evidence runs</h3>
+      </div>
+      <span class="chip" *ngIf="evidenceList.length">{{ evidenceList.length }} tracked</span>
+    </div>
+
+    <div *ngIf="!evidenceList.length" class="subdued">
+      No evidence yet. Upload content to watch the pipeline trace its steps.
+    </div>
+
+    <div class="pipeline-list" *ngIf="evidenceList.length">
+      <div class="pipeline-item card" *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
+        <div class="pipeline-header">
+          <div>
+            <div class="pill" [class.cache]="ev.ai_classification?.cache_hit">{{ ev.title }}</div>
+            <div class="subdued">
+              {{ ev.description || 'No description' }} · {{ ev.source_type_id || 'source unknown' }}
+            </div>
+          </div>
+          <div class="pipeline-actions">
+            <span class="badge-success" *ngIf="ev.ai_classification">
+              {{ confidenceLabel(ev) }}
+            </span>
+            <button class="btn-ghost" (click)="classifyEvidence(ev.id)" [disabled]="loading.classifyId === ev.id">
+              {{ loading.classifyId === ev.id ? 'Classifying…' : 'Re-run' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="stages">
+          <div class="stage" *ngFor="let stage of getPipelineState(ev)">
+            <div class="dot" [class.done]="stage.status === 'done'" [class.active]="stage.status === 'active'"></div>
+            <div>
+              <div class="stage-title">{{ stage.label }}</div>
+              <div class="subdued">{{ stage.detail }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="controls" *ngIf="primaryControls(ev).length">
+          <div class="label">Primary controls</div>
+          <div class="tags">
+            <span class="tag" *ngFor="let control of primaryControls(ev)">{{ control }}</span>
+          </div>
+        </div>
+        <div class="controls" *ngIf="ev.ai_classification?.cache_hit">
+          <div class="label">Cache hit</div>
+          <div class="subdued">Matched prior evidence ({{ ev.ai_classification?.similarity | number:'1.2-2' }} similarity)</div>
+        </div>
+        <div class="controls" *ngIf="ev.ai_classification?.pipeline_run_id">
+          <div class="label">Pipeline run</div>
+          <div class="subdued">Run ID: {{ ev.ai_classification?.pipeline_run_id }}</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card table-card">
+    <div class="section-header">
+      <div>
+        <p class="eyebrow">Evidence log</p>
+        <h3>Outputs</h3>
+      </div>
+      <span class="chip">{{ evidenceList.length }} records</span>
+    </div>
+    <div class="table-wrapper">
+      <table class="table" *ngIf="evidenceList.length; else emptyTable">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Controls</th>
+            <th>Confidence</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
+            <td>
+              <div class="table-title">{{ ev.title }}</div>
+              <div class="subdued">{{ ev.source_type_id || 'source unknown' }}</div>
+            </td>
+            <td>
+              <span class="badge-success" *ngIf="ev.ai_classification">Classified</span>
+              <span class="badge-warn" *ngIf="!ev.ai_classification">Pending</span>
+            </td>
+            <td>
+              <div class="tags" *ngIf="primaryControls(ev).length; else noControls">
+                <span class="tag" *ngFor="let ctrl of primaryControls(ev)">{{ ctrl }}</span>
+              </div>
+              <ng-template #noControls><span class="subdued">—</span></ng-template>
+            </td>
+            <td>{{ ev.ai_classification?.confidence ? (ev.ai_classification?.confidence | percent:'1.0-1') : '—' }}</td>
+            <td>{{ ev.updated_at ? (ev.updated_at | date:'short') : '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <ng-template #emptyTable>
+        <p class="subdued">No evidence yet.</p>
+      </ng-template>
+    </div>
+  </section>
+</div>
+
+<ng-template #authPanel>
+  <div class="auth-shell">
+    <div class="auth-card card">
+      <div class="auth-header">
+        <h2>Welcome to AuditMind</h2>
+        <p class="subdued">Create an account to set up your first organization or sign in to continue.</p>
+      </div>
+      <div class="auth-toggle">
+        <button class="btn-ghost" [class.active]="authMode === 'signup'" (click)="authMode = 'signup'">
+          Create account
+        </button>
+        <button class="btn-ghost" [class.active]="authMode === 'login'" (click)="authMode = 'login'">
+          Sign in
+        </button>
+      </div>
+
+      <form *ngIf="authMode === 'signup'" class="form" [formGroup]="signupForm" (ngSubmit)="signup()">
+        <div class="form-row two-col">
+          <div>
+            <label>Email</label>
+            <input class="input" type="email" formControlName="email" placeholder="you@company.com" />
+          </div>
+          <div>
+            <label>Password</label>
+            <input class="input" type="password" formControlName="password" placeholder="••••••••" />
+          </div>
+        </div>
+        <div>
+          <label>Full name</label>
+          <input class="input" formControlName="full_name" placeholder="Alex Morgan" />
+        </div>
+        <div class="form-row two-col">
+          <div>
+            <label>Organization name</label>
+            <input class="input" formControlName="organization_name" placeholder="Acme Security" />
+          </div>
+          <div>
+            <label>Domain (optional)</label>
+            <input class="input" formControlName="domain" placeholder="acme.com" />
+          </div>
+        </div>
+        <button class="btn-primary" type="submit">Create account &amp; org</button>
+      </form>
+
+      <form *ngIf="authMode === 'login'" class="form" [formGroup]="loginForm" (ngSubmit)="login()">
+        <div class="form-row">
+          <div>
+            <label>Email</label>
+            <input class="input" type="email" formControlName="email" placeholder="you@company.com" />
+          </div>
+          <div>
+            <label>Password</label>
+            <input class="input" type="password" formControlName="password" placeholder="••••••••" />
+          </div>
+        </div>
+        <button class="btn-primary" type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+</ng-template>
