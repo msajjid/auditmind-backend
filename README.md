@@ -46,7 +46,7 @@ Create the database/user in Postgres, then apply migrations and seed SOC 2 contr
 ```bash
 python manage.py migrate
 python manage.py seed_soc2_controls
-python manage.py createsuperuser   # optional admin UI login
+python manage.py createsuperuser   # admin/superuser for Django admin UI
 ```
 
 Run the API:
@@ -58,6 +58,7 @@ python manage.py runserver 0.0.0.0:8000
 - API base path: `/api/`
 - Health check: `GET /api/health/`
 - Media/uploads live under `var/uploads/` (created automatically).
+- Django admin (superuser): `http://localhost:8000/admin/` (use the `createsuperuser` credentials).
 
 ### Background jobs (optional)
 
