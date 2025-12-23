@@ -9,6 +9,7 @@
       <a href="#" class="nav-link" (click)="setView('dashboard'); $event.preventDefault()">AuditMind Evidence Cockpit</a>
       <a href="#" class="nav-link" (click)="setView('organization'); $event.preventDefault()">Organizations</a>
       <a href="#" class="nav-link" (click)="setView('tasks'); $event.preventDefault()">Tasks</a>
+      <a href="#" class="nav-link nav-sub" (click)="setView('event-log'); $event.preventDefault()">Evidence log</a>
       <div class="nav-section">
         <div class="nav-section-title">Settings</div>
         <a
@@ -370,57 +371,12 @@
       </div>
     </section>
 
-    <section id="outputs" class="card table-card">
-      <div class="section-header">
-        <div>
-          <p class="eyebrow">Evidence log</p>
-          <h3>Outputs</h3>
-        </div>
-        <span class="chip">{{ evidenceList.length }} records</span>
-      </div>
-      <div class="table-wrapper">
-        <table class="table" *ngIf="evidenceList.length; else emptyTable">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Status</th>
-              <th>Controls</th>
-              <th>Confidence</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
-              <td>
-                <div class="table-title">{{ displayTitle(ev) }}</div>
-                <div class="subdued">{{ ev.source_type_id || 'source unknown' }}</div>
-              </td>
-              <td>
-                <span class="badge-success" *ngIf="ev.ai_classification">Classified</span>
-                <span class="badge-warn" *ngIf="!ev.ai_classification">Pending</span>
-              </td>
-              <td>
-                <div class="tags" *ngIf="primaryControls(ev).length; else noControls">
-                  <span class="tag" *ngFor="let ctrl of primaryControls(ev)">{{ ctrl }}</span>
-                </div>
-                <ng-template #noControls><span class="subdued">—</span></ng-template>
-              </td>
-              <td>{{ ev.ai_classification?.confidence ? (ev.ai_classification?.confidence | percent:'1.0-1') : '—' }}</td>
-              <td>{{ ev.updated_at ? (ev.updated_at | date:'short') : '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <ng-template #emptyTable>
-          <p class="subdued">No evidence yet.</p>
-        </ng-template>
-      </div>
-    </section>
   </main>
 
   <ng-template #otherViews>
     <ng-container [ngSwitch]="viewMode">
       <ng-container *ngSwitchCase="'organization'">
-        <main class="page">
+        <main class="page event-log-page">
           <div class="card">
             <div class="section-header">
               <div>
@@ -436,34 +392,54 @@
             <div *ngIf="!isAdminAnywhere()" class="subdued">
               Organization creation is available to admins only.
             </div>
-            <div class="org-list" *ngIf="organizations.length; else emptyOrgList">
-              <div
-                *ngFor="let org of organizations; trackBy: trackOrgById"
-                class="org-item"
-                [class.active]="org.id === selectedOrgId"
-                (click)="selectOrg(org.id)"
-              >
-                <div>
-                  <div class="org-name">{{ org.name }}</div>
-                  <div class="subdued">{{ org.domain || 'No domain' }}</div>
+            <div *ngIf="organizations.length; else emptyOrgList">
+              <div class="org-toolbar">
+                <input
+                  class="input"
+                  type="search"
+                  placeholder="Search organizations"
+                  [value]="orgSearchTerm"
+                  (input)="setOrgSearch($any($event.target).value)"
+                />
+                <div class="org-pagination" *ngIf="orgTotalPages() > 1">
+                  <button class="btn-ghost" type="button" (click)="goOrgPage('prev')" [disabled]="orgPage === 0">
+                    Prev
+                  </button>
+                  <span class="page-pill">{{ orgPage + 1 }} / {{ orgTotalPages() }}</span>
+                  <button
+                    class="btn-ghost"
+                    type="button"
+                    (click)="goOrgPage('next')"
+                    [disabled]="orgPage + 1 >= orgTotalPages()"
+                  >
+                    Next
+                  </button>
                 </div>
-                <span class="chip">{{ org.plan || 'free' }}</span>
               </div>
+
+              <div class="org-list" *ngIf="visibleOrganizations().length; else noOrgMatches">
+                <div
+                  *ngFor="let org of visibleOrganizations(); trackBy: trackOrgById"
+                  class="org-item"
+                  [class.active]="org.id === selectedOrgId"
+                >
+                  <div class="org-main">
+                    <div class="org-name">{{ org.name }}</div>
+                    <div class="subdued">{{ org.domain || 'No domain' }}</div>
+                  </div>
+                  <div class="org-meta">
+                    <span class="active-badge" *ngIf="org.id === selectedOrgId">Active</span>
+                    <span class="chip">{{ org.plan || 'free' }}</span>
+                  </div>
+                </div>
+              </div>
+              <ng-template #noOrgMatches>
+                <p class="subdued">No organizations match your search.</p>
+              </ng-template>
             </div>
             <ng-template #emptyOrgList>
               <p class="subdued">No organizations yet. Use the button above to add one.</p>
             </ng-template>
-          </div>
-
-          <div class="card" *ngIf="selectedOrgId">
-            <div class="section-header">
-              <div>
-                <p class="eyebrow">Active organization</p>
-                <h3>{{ organizationName(selectedOrgId) }}</h3>
-              </div>
-              <span class="chip">Role: {{ roleForOrg(selectedOrgId) || 'unknown' }}</span>
-            </div>
-            <p class="subdued">Members now live under User management. Prompts and models are available in Settings.</p>
           </div>
 
           <div class="modal-backdrop" *ngIf="showOrgModal">
@@ -492,11 +468,13 @@
                 <h3>Members</h3>
               </div>
               <div class="actions">
-                <label class="subdued">Organization</label>
-                <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
-                  <option value="" disabled>Select organization</option>
-                  <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
-                </select>
+                <div class="field">
+                  <label class="subdued">Organization</label>
+                  <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+                    <option value="" disabled>Select organization</option>
+                    <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+                  </select>
+                </div>
               </div>
             </div>
             <p class="subdued">Review and manage memberships per organization.</p>
@@ -532,11 +510,13 @@
                 <h3>Auto-created follow-ups</h3>
               </div>
               <div class="actions">
-                <label class="subdued">Organization</label>
-                <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
-                  <option value="" disabled>Select organization</option>
-                  <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
-                </select>
+                <div class="field">
+                  <label class="subdued">Organization</label>
+                  <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+                    <option value="" disabled>Select organization</option>
+                    <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+                  </select>
+                </div>
                 <button class="btn-ghost" type="button" (click)="loadTasks()" [disabled]="!selectedOrgId || tasksLoading">
                   {{ tasksLoading ? 'Loading…' : 'Reload tasks' }}
                 </button>
@@ -553,6 +533,43 @@
           <ng-template #noTasksOrg>
             <div class="card">
               <p class="subdued">Select an organization to view tasks.</p>
+            </div>
+          </ng-template>
+        </main>
+      </ng-container>
+      <ng-container *ngSwitchCase="'event-log'">
+        <main class="page">
+          <div class="card">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Evidence log</p>
+                <h3>Evidence outputs</h3>
+              </div>
+              <div class="actions event-log-actions">
+                <div class="field">
+                  <label class="subdued">Organization</label>
+                  <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+                    <option value="" disabled>Select organization</option>
+                    <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+                  </select>
+                </div>
+                <button class="btn-ghost" type="button" (click)="loadEvidence()" [disabled]="!selectedOrgId || loading.evidence">
+                  {{ loading.evidence ? 'Loading…' : 'Reload log' }}
+                </button>
+              </div>
+            </div>
+            <p class="subdued">Review the full evidence log in a dedicated view.</p>
+          </div>
+          <app-event-log
+            *ngIf="selectedOrgId; else noEventOrg"
+            [evidenceList]="evidenceList"
+            [displayTitleFn]="displayTitleFn"
+            [primaryControlsFn]="primaryControlsFn"
+            [loading]="loading.evidence"
+          ></app-event-log>
+          <ng-template #noEventOrg>
+            <div class="card">
+              <p class="subdued">Select an organization to view the event log.</p>
             </div>
           </ng-template>
         </main>

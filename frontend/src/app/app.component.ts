@@ -21,6 +21,7 @@ import {
   TaskItem,
 } from './models';
 import { ApiService } from './services/api.service';
+import { EventLogComponent } from './event-log.component';
 import { OrganizationFormComponent } from './organization-form.component';
 import { UserManagementComponent } from './user-management.component';
 import { PromptManagementComponent } from './prompt-management.component';
@@ -52,6 +53,7 @@ type ActiveTheme = 'light' | 'dark';
     PromptManagementComponent,
     ModelManagementComponent,
     TaskManagementComponent,
+    EventLogComponent,
   ],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css'],
@@ -75,7 +77,7 @@ export class AppComponent implements OnInit, OnDestroy {
   currentUser: AuthUser | null = null;
   authToken: string | null = null;
   authMode: 'login' | 'signup' = 'signup';
-  viewMode: 'dashboard' | 'organization' | 'user-management' | 'settings' | 'tasks' = 'dashboard';
+  viewMode: 'dashboard' | 'organization' | 'user-management' | 'settings' | 'tasks' | 'event-log' = 'dashboard';
   showOrgModal = false;
   expandedEvidenceId: string | null = null;
   detailTab: 'runs' | 'events' = 'runs';
@@ -109,6 +111,11 @@ export class AppComponent implements OnInit, OnDestroy {
   tasks: TaskItem[] = [];
   tasksLoading = false;
   tasksError: string | null = null;
+  readonly displayTitleFn = (evidence: Evidence) => this.displayTitle(evidence);
+  readonly primaryControlsFn = (evidence: Evidence) => this.primaryControls(evidence);
+  orgSearchTerm = '';
+  orgPage = 0;
+  readonly orgPageSize = 5;
   selectedFile: File | null = null;
   fileError: string | null = null;
 
@@ -197,11 +204,8 @@ export class AppComponent implements OnInit, OnDestroy {
     this.api.getOrganizations().subscribe({
       next: (orgs) => {
         this.organizations = orgs;
-        if (!this.selectedOrgId && orgs.length) {
-          this.selectedOrgId = orgs[0].id;
-          this.loadEvidence();
-          this.loadMemberships(orgs[0].id);
-        }
+        this.orgPage = 0;
+        this.applyActiveOrganization();
         if (orgs.length) {
           this.loadRegistry();
         }
@@ -345,6 +349,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.organizations = [];
     this.evidenceList = [];
     this.selectedOrgId = null;
+    localStorage.removeItem('am_active_org');
     this.viewMode = 'dashboard';
     this.showOrgModal = false;
     localStorage.removeItem('am_token');
@@ -352,10 +357,53 @@ export class AppComponent implements OnInit, OnDestroy {
 
   selectOrg(orgId: string): void {
     this.selectedOrgId = orgId;
+    localStorage.setItem('am_active_org', orgId);
     this.loadEvidence();
     this.loadMemberships(orgId);
     if (this.viewMode === 'tasks') {
       this.loadTasks();
+    }
+  }
+
+  setOrgSearch(term: string): void {
+    this.orgSearchTerm = term || '';
+    this.orgPage = 0;
+  }
+
+  filteredOrganizations(): Organization[] {
+    const term = this.orgSearchTerm.trim().toLowerCase();
+    if (!term) {
+      return [...this.organizations];
+    }
+    return this.organizations.filter((org) => {
+      const domain = org.domain || '';
+      const plan = org.plan || '';
+      const haystack = `${org.name} ${domain} ${plan}`.toLowerCase();
+      return haystack.includes(term);
+    });
+  }
+
+  visibleOrganizations(): Organization[] {
+    const list = this.filteredOrganizations();
+    if (!list.length) return [];
+    const page = Math.max(0, Math.min(this.orgPage, Math.ceil(list.length / this.orgPageSize) - 1));
+    const start = page * this.orgPageSize;
+    return list.slice(start, start + this.orgPageSize);
+  }
+
+  orgTotalPages(): number {
+    const total = this.filteredOrganizations().length;
+    if (!total) return 0;
+    return Math.ceil(total / this.orgPageSize);
+  }
+
+  goOrgPage(direction: 'prev' | 'next'): void {
+    const totalPages = this.orgTotalPages();
+    if (!totalPages) return;
+    if (direction === 'prev') {
+      this.orgPage = Math.max(0, this.orgPage - 1);
+    } else {
+      this.orgPage = Math.min(totalPages - 1, this.orgPage + 1);
     }
   }
 
@@ -668,22 +716,54 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   eventTypes(evidenceId: string): string[] {
-    const state = this.eventsState[evidenceId];
-    if (!state) return [];
-    const uniq = Array.from(new Set(state.events.map((e) => e.event_type)));
-    return uniq;
+    const events = this.eventsForRun(evidenceId);
+    return Array.from(new Set(events.map((e) => e.event_type)));
   }
 
   filteredEvents(evidenceId: string): EvidenceEvent[] {
     const state = this.eventsState[evidenceId];
     if (!state) return [];
+    const baseEvents = this.eventsForRun(evidenceId);
     const filter = state.filter || 'all';
-    const events = filter === 'all' ? state.events : state.events.filter((e) => e.event_type === filter);
+    const events = filter === 'all' ? baseEvents : baseEvents.filter((e) => e.event_type === filter);
     return [...events].sort((a, b) => {
       const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
       const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
       return bTime - aTime;
     });
+  }
+
+  private eventsForRun(evidenceId: string): EvidenceEvent[] {
+    const state = this.eventsState[evidenceId];
+    const runState = this.runsState[evidenceId];
+    if (!state?.events?.length) return [];
+
+    const selectedRun =
+      runState?.runs?.find((r) => r.id === runState.selectedRunId) || runState?.runs?.[0] || null;
+    const pipelineId = selectedRun?.pipeline_run?.id || selectedRun?.id || null;
+    if (!pipelineId) return state.events;
+
+    return state.events.filter((ev) => {
+      const evPipelineId = this.eventPipelineId(ev);
+      return evPipelineId ? evPipelineId === pipelineId : false;
+    });
+  }
+
+  private eventPipelineId(event: EvidenceEvent): string | null {
+    const direct = (event as any).pipeline_run_id || (event as any).pipelineRunId;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+    const payload = event.payload || {};
+    const candidateKeys = ['pipeline_run_id', 'pipeline_run', 'pipelineRunId', 'run_id'];
+    for (const key of candidateKeys) {
+      const val = (payload as any)[key];
+      if (typeof val === 'string' && val.trim()) return val.trim();
+      if (val && typeof val === 'object' && typeof (val as any).id === 'string') {
+        const nested = (val as any).id;
+        if (nested.trim()) return nested.trim();
+      }
+    }
+    return null;
   }
 
   primaryControls(evidence: Evidence): string[] {
@@ -730,8 +810,14 @@ export class AppComponent implements OnInit, OnDestroy {
     return this.memberships.some((m) => m.role === 'admin');
   }
 
-  setView(mode: 'dashboard' | 'organization' | 'user-management' | 'settings' | 'tasks'): void {
+  setView(mode: 'dashboard' | 'organization' | 'user-management' | 'settings' | 'tasks' | 'event-log'): void {
     this.viewMode = mode;
+    if (mode === 'dashboard') {
+      this.applyActiveOrganization();
+    }
+    if (mode === 'event-log' && this.selectedOrgId) {
+      this.loadEvidence();
+    }
     if (mode === 'user-management' && this.selectedOrgId) {
       this.loadMemberships(this.selectedOrgId);
     }
@@ -767,6 +853,32 @@ export class AppComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.toast = null;
     }, 4200);
+  }
+
+  private applyActiveOrganization(): void {
+    const stored = localStorage.getItem('am_active_org');
+    const storedValid = stored && this.organizations.some((o) => o.id === stored);
+    const selectedValid = this.selectedOrgId && this.organizations.some((o) => o.id === this.selectedOrgId);
+
+    let targetId: string | null = null;
+    if (storedValid) {
+      targetId = stored as string;
+    } else if (selectedValid) {
+      targetId = this.selectedOrgId;
+    } else if (this.organizations.length) {
+      targetId = this.organizations[0].id;
+    }
+
+    if (!targetId) return;
+
+    const changed = targetId !== this.selectedOrgId;
+    this.selectedOrgId = targetId;
+    localStorage.setItem('am_active_org', targetId);
+
+    if (changed) {
+      this.loadEvidence();
+      this.loadMemberships(targetId);
+    }
   }
 
   summarizePayload(obj?: Record<string, unknown> | null, limit = 4): KeyValuePair[] {

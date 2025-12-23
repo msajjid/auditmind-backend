@@ -126,6 +126,7 @@ export interface EvidenceEvent {
   event_type: string;
   evidence_id?: string;
   organization_id?: string;
+  pipeline_run_id?: string;
   payload?: Record<string, unknown> | null;
   created_at?: string;
 }

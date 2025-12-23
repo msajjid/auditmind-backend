@@ -85,6 +85,11 @@
   margin-bottom: 20px;
 }
 
+.event-log-page {
+  display: grid;
+  gap: 22px;
+}
+
 .hero {
   display: grid;
   grid-template-columns: 1fr 320px;
@@ -121,6 +126,19 @@
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.event-log-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.event-log-actions .field {
+  display: grid;
+  gap: 6px;
+  min-width: 240px;
 }
 
 .theme-toggle {
@@ -205,6 +223,46 @@
   margin-bottom: 12px;
 }
 
+.section-header .actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.section-header .actions .field {
+  display: grid;
+  gap: 6px;
+  min-width: 240px;
+}
+
+.org-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.org-toolbar .input {
+  min-width: 240px;
+  flex: 1;
+}
+
+.org-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-pill {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .org-list {
   display: flex;
   flex-direction: column;
@@ -219,8 +277,9 @@
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  cursor: pointer;
+  cursor: default;
   transition: border-color 0.15s ease, transform 0.1s ease;
+  position: relative;
 }
 
 .org-item:hover {
@@ -229,12 +288,38 @@
 }
 
 .org-item.active {
-  border-color: rgba(122, 240, 183, 0.8);
-  background: rgba(122, 240, 183, 0.05);
+  border-color: rgba(122, 240, 183, 0.85);
+  background: linear-gradient(120deg, rgba(122, 240, 183, 0.08), rgba(255, 255, 255, 0.02));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(122, 240, 183, 0.25);
 }
 
 .org-name {
   font-weight: 700;
+}
+
+.org-main {
+  display: grid;
+  gap: 2px;
+}
+
+.org-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(122, 240, 183, 0.8);
+  color: #0f3c2c;
+  background: rgba(122, 240, 183, 0.16);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .form {
