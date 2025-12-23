@@ -30,6 +30,14 @@ class Task(models.Model):
         related_name="tasks",
         db_column="control_id",
     )
+    evidence = models.ForeignKey(
+        "Evidence",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tasks",
+        db_column="evidence_id",
+    )
     title = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
     status = models.CharField(max_length=50, default="open")

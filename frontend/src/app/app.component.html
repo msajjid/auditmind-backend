@@ -1,262 +1,597 @@
-<div class="page" *ngIf="authToken; else authPanel">
-  <header class="hero card">
-    <div class="hero-main">
-      <div class="eyebrow">Audit pipelines · live</div>
-      <h1>{{ title }}</h1>
-      <p class="subdued">
-        Upload evidence, watch the classification pipeline run, and keep outputs organized per organization.
-        The dashboard proxies requests to the Django API at <code>/api</code>.
-      </p>
-      <div class="stat-row">
-        <div class="stat">
-          <div class="stat-value">{{ organizations.length }}</div>
-          <div class="stat-label">Organizations</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">{{ evidenceList.length }}</div>
-          <div class="stat-label">Evidence items</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value">{{ classifiedCount }}</div>
-          <div class="stat-label">Classified</div>
-        </div>
-      </div>
+<div class="app-shell" *ngIf="authToken; else authPanel">
+  <aside class="sidebar card">
+    <div class="sidebar-header">
+      <div class="logo">AuditMind</div>
+      <p class="subdued small">Evidence Cockpit</p>
     </div>
-    <div class="hero-actions">
+
+    <nav class="nav-links">
+      <a href="#" class="nav-link" (click)="setView('dashboard'); $event.preventDefault()">AuditMind Evidence Cockpit</a>
+      <a href="#" class="nav-link" (click)="setView('organization'); $event.preventDefault()">Organizations</a>
+      <a href="#" class="nav-link" (click)="setView('tasks'); $event.preventDefault()">Tasks</a>
+      <div class="nav-section">
+        <div class="nav-section-title">Settings</div>
+        <a
+          href="#"
+          class="nav-link nav-sub"
+          (click)="setSettingsTab('prompts'); setView('settings'); $event.preventDefault()"
+          >Prompts</a
+        >
+        <a
+          href="#"
+          class="nav-link nav-sub"
+          (click)="setSettingsTab('models'); setView('settings'); $event.preventDefault()"
+          >Models</a
+        >
+      </div>
+    </nav>
+
+    <div class="sidebar-section">
+      <p class="eyebrow">Admin</p>
+      <a href="#" class="nav-link" (click)="setView('user-management'); $event.preventDefault()">User management</a>
+    </div>
+
+    <div class="sidebar-footer">
       <div class="user-pill">
         <div class="subdued">Signed in as</div>
         <div class="org-name">{{ currentUser?.email }}</div>
-        <button class="btn-ghost" (click)="logout()">Sign out</button>
       </div>
-      <label class="subdued">Active organization</label>
-      <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
-        <option value="" disabled>Select organization</option>
-        <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
-      </select>
-      <div class="hero-buttons">
-        <button class="btn-ghost" (click)="loadOrganizations()" [disabled]="loading.orgs">
-          {{ loading.orgs ? 'Refreshing…' : 'Reload orgs' }}
-        </button>
-        <button class="btn-ghost" (click)="loadEvidence()" [disabled]="loading.evidence || !selectedOrgId">
-          {{ loading.evidence ? 'Loading…' : 'Reload evidence' }}
-        </button>
-      </div>
-      <div class="hint">
-        Use the proxy-config dev server so API calls stay same-origin: <code>npm start</code> (port 4200 → 8000).
-      </div>
+      <button class="btn-ghost" (click)="logout()">Sign out</button>
     </div>
-  </header>
+  </aside>
 
-  <div *ngIf="toast" class="toast" [ngClass]="toast.kind">{{ toast.message }}</div>
-
-  <section class="grid two-col">
-    <div class="card">
-      <div class="section-header">
-        <div>
-          <p class="eyebrow">Organizations</p>
-          <h3>Manage tenants</h3>
+  <main class="page" *ngIf="viewMode === 'dashboard'; else otherViews">
+    <header id="cockpit" class="hero card">
+      <div class="hero-main">
+        <div class="eyebrow">Audit pipelines · live</div>
+        <h1>{{ title }}</h1>
+        <p class="subdued">
+          Upload evidence, watch the classification pipeline run, and keep outputs organized per organization.
+          The dashboard proxies requests to the Django API at <code>/api</code>.
+        </p>
+        <div class="stat-row">
+          <div class="stat">
+            <div class="stat-value">{{ organizations.length }}</div>
+            <div class="stat-label">Organizations</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">{{ evidenceList.length }}</div>
+            <div class="stat-label">Evidence items</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">{{ classifiedCount }}</div>
+            <div class="stat-label">Classified</div>
+          </div>
         </div>
-        <span class="chip" *ngIf="organizations.length">{{ organizations.length }} active</span>
       </div>
-      <div class="org-list" *ngIf="organizations.length; else emptyOrg">
-        <div
-          *ngFor="let org of organizations; trackBy: trackOrgById"
-          (click)="selectOrg(org.id)"
-          [class.active]="org.id === selectedOrgId"
-          class="org-item"
-        >
-          <div>
-            <div class="org-name">{{ org.name }}</div>
-            <div class="subdued">{{ org.domain || 'No domain' }}</div>
-          </div>
-          <span class="chip">{{ org.plan || 'free' }}</span>
+      <div class="hero-actions">
+        <label class="subdued">Active organization</label>
+        <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+          <option value="" disabled>Select organization</option>
+          <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+        </select>
+        <div class="hero-buttons">
+          <button class="btn-ghost" (click)="loadOrganizations()" [disabled]="loading.orgs">
+            {{ loading.orgs ? 'Refreshing…' : 'Reload orgs' }}
+          </button>
+          <button class="btn-ghost" (click)="loadEvidence()" [disabled]="loading.evidence || !selectedOrgId">
+            {{ loading.evidence ? 'Loading…' : 'Reload evidence' }}
+          </button>
+        </div>
+        <div class="theme-toggle">
+          <label class="subdued">Theme</label>
+          <select class="input" [value]="themePreference" (change)="setThemePreference($any($event.target).value)">
+            <option value="system">System / Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+          <div class="theme-note">Auto follows OS preference and switches with daylight hours.</div>
+        </div>
+        <div class="hint">
+          Use the proxy-config dev server so API calls stay same-origin: <code>npm start</code> (port 4200 → 8000).
         </div>
       </div>
-      <ng-template #emptyOrg>
-        <p class="subdued">No organizations yet. Create one to start uploading evidence.</p>
-      </ng-template>
+    </header>
 
-      <form class="form" *ngIf="isAdminForOrg()" [formGroup]="orgForm" (ngSubmit)="submitOrganization()">
-        <div class="form-row two-col">
-          <div>
-            <label>Name</label>
-            <input class="input" formControlName="name" placeholder="Acme Corp" />
-          </div>
-          <div>
-            <label>Domain</label>
-            <input class="input" formControlName="domain" placeholder="acme.com" />
-          </div>
-        </div>
-        <div class="form-row two-col">
-          <div>
-            <label>Industry</label>
-            <input class="input" formControlName="industry" placeholder="SaaS, Fintech" />
-          </div>
-          <div>
-            <label>Plan</label>
-            <input class="input" formControlName="plan" placeholder="free / pro" />
-          </div>
-        </div>
-        <button class="btn-primary" type="submit" [disabled]="loading.createOrg">
-          {{ loading.createOrg ? 'Creating…' : 'Create organization' }}
-        </button>
-      </form>
-    </div>
+    <div *ngIf="toast" class="toast" [ngClass]="toast.kind">{{ toast.message }}</div>
 
-    <div class="card">
+    <section id="intake" class="card">
       <div class="section-header">
         <div>
           <p class="eyebrow">Evidence intake</p>
-          <h3>Upload + classify</h3>
+          <h3>Upload evidence</h3>
         </div>
-        <span class="chip" *ngIf="selectedOrgId">Org selected</span>
+        <span class="chip" *ngIf="selectedOrgId">
+          Org selected · Role: {{ roleForOrg(selectedOrgId) || 'unknown' }}
+        </span>
       </div>
-      <form class="form" [formGroup]="evidenceForm" (ngSubmit)="submitEvidence()">
-        <div class="mode-toggle">
-          <button
-            type="button"
-            class="btn-ghost"
-            [class.active]="evidenceForm.value.rawMode === 'text'"
-            (click)="evidenceForm.patchValue({ rawMode: 'text' })"
-          >
-            Raw text
-          </button>
-          <button
-            type="button"
-            class="btn-ghost"
-            [class.active]="evidenceForm.value.rawMode === 'json'"
-            (click)="evidenceForm.patchValue({ rawMode: 'json' })"
-          >
-            JSON payload
-          </button>
+      <form class="form" (submit)="submitEvidence(); $event.preventDefault()">
+        <input
+          type="file"
+          class="input"
+          (change)="selectedFile = $any($event.target).files[0] || null"
+          accept=".json,.txt,.pdf"
+        />
+        <div class="subdued" *ngIf="selectedFile">
+          Selected: {{ selectedFile.name }} · {{ (selectedFile.size / 1024) | number:'1.0-1' }} KB
         </div>
 
-        <div *ngIf="evidenceForm.value.rawMode === 'text'">
-          <label>Raw text</label>
-          <textarea class="input" formControlName="raw_text" placeholder="Paste log lines or notes"></textarea>
-        </div>
-        <div *ngIf="evidenceForm.value.rawMode === 'json'">
-          <label>Raw JSON</label>
-          <textarea
-            class="input"
-            formControlName="raw_json"
-            placeholder='{"resource": "arn:aws:s3:::..."}'
-          ></textarea>
-          <div class="error" *ngIf="rawJsonError">{{ rawJsonError }}</div>
-        </div>
-
-        <button class="btn-primary" type="submit" [disabled]="loading.upload">
+        <button class="btn-primary" type="submit" [disabled]="loading.upload || !canContribute(selectedOrgId)">
           {{ loading.upload ? 'Uploading…' : 'Upload + classify' }}
         </button>
+        <div class="error" *ngIf="selectedOrgId && !canContribute(selectedOrgId)">
+          Viewers cannot upload or classify evidence. Ask an admin/member to grant permissions.
+        </div>
       </form>
-    </div>
-  </section>
+    </section>
 
-  <section class="card pipeline-card">
-    <div class="section-header">
-      <div>
-        <p class="eyebrow">Pipeline monitor</p>
-        <h3>Recent evidence runs</h3>
+    <section id="pipeline" class="card pipeline-card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Pipeline monitor</p>
+          <h3>Recent evidence runs</h3>
+        </div>
+        <span class="chip" *ngIf="evidenceList.length">{{ evidenceList.length }} tracked</span>
       </div>
-      <span class="chip" *ngIf="evidenceList.length">{{ evidenceList.length }} tracked</span>
-    </div>
 
-    <div *ngIf="!evidenceList.length" class="subdued">
-      No evidence yet. Upload content to watch the pipeline trace its steps.
-    </div>
+      <div *ngIf="!evidenceList.length" class="subdued">
+        No evidence yet. Upload content to watch the pipeline trace its steps.
+      </div>
 
-    <div class="pipeline-list" *ngIf="evidenceList.length">
-      <div class="pipeline-item card" *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
-        <div class="pipeline-header">
-          <div>
-            <div class="pill" [class.cache]="ev.ai_classification?.cache_hit">{{ ev.title }}</div>
-            <div class="subdued">
-              {{ ev.description || 'No description' }} · {{ ev.source_type_id || 'source unknown' }}
+      <div class="pipeline-list" *ngIf="evidenceList.length">
+        <div class="pipeline-item card" *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
+          <div class="pipeline-header">
+            <div>
+              <div class="pill" [class.cache]="ev.ai_classification?.cache_hit">{{ displayTitle(ev) }}</div>
+              <div class="subdued">
+                {{ ev.description || 'No description' }} · {{ ev.source_type_id || 'source unknown' }}
+              </div>
+            </div>
+            <div class="pipeline-actions">
+              <span class="badge-success" *ngIf="ev.ai_classification">
+                {{ confidenceLabel(ev) }}
+              </span>
+              <button
+                class="btn-ghost"
+                (click)="classifyEvidence(ev.id)"
+                [disabled]="loading.classifyId === ev.id || !canContribute(ev.organization_id)"
+              >
+                {{ loading.classifyId === ev.id ? 'Classifying…' : 'Re-run' }}
+              </button>
+              <button
+                class="btn-ghost"
+                (click)="classifyEvidenceAsync(ev.id)"
+                [disabled]="!canContribute(ev.organization_id)"
+              >
+                Queue async
+              </button>
+              <button class="btn-secondary" type="button" (click)="toggleDetail(ev.id)">
+                {{ expandedEvidenceId === ev.id ? 'Hide timeline' : 'View timeline' }}
+              </button>
             </div>
           </div>
-          <div class="pipeline-actions">
-            <span class="badge-success" *ngIf="ev.ai_classification">
-              {{ confidenceLabel(ev) }}
-            </span>
-            <button class="btn-ghost" (click)="classifyEvidence(ev.id)" [disabled]="loading.classifyId === ev.id">
-              {{ loading.classifyId === ev.id ? 'Classifying…' : 'Re-run' }}
+
+          <div class="stage-info">
+            <button
+              type="button"
+              class="info-button"
+              (click)="toggleStageInfo(ev.id)"
+              [attr.aria-expanded]="stageInfoOpenId === ev.id"
+              aria-label="Show pipeline outline"
+            >
+              <span class="info-icon">?</span>
+              Pipeline outline
+            </button>
+            <div class="info-popover card" *ngIf="stageInfoOpenId === ev.id">
+              <div class="popover-header">
+                <div class="eyebrow">Pipeline</div>
+                <h4>Stage outline</h4>
+              </div>
+              <ul class="stage-list">
+                <li *ngFor="let stage of pipelineStages">
+                  <div class="stage-title">{{ stage.label }}</div>
+                  <div class="subdued">{{ stage.detail }}</div>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="controls" *ngIf="primaryControls(ev).length">
+            <div class="label">Primary controls</div>
+            <div class="tags">
+              <span class="tag" *ngFor="let control of primaryControls(ev)">{{ control }}</span>
+            </div>
+          </div>
+          <div class="controls" *ngIf="ev.ai_classification?.cache_hit">
+            <div class="label">Cache hit</div>
+            <div class="subdued">Matched prior evidence ({{ ev.ai_classification?.similarity | number:'1.2-2' }} similarity)</div>
+          </div>
+          <div class="controls" *ngIf="ev.ai_classification?.pipeline_run_id">
+            <div class="label">Pipeline run</div>
+            <div class="subdued">Run ID: {{ ev.ai_classification?.pipeline_run_id }}</div>
+          </div>
+          <div class="controls" *ngIf="jobState[ev.id]">
+            <div class="label">Async job</div>
+            <div class="subdued">
+              Job {{ jobState[ev.id].job_id || 'pending' }} · Status: {{ jobState[ev.id].status }}
+              <span *ngIf="jobState[ev.id].lastChecked">· polled {{ jobState[ev.id].lastChecked | date:'shortTime' }}</span>
+            </div>
+            <div class="error" *ngIf="jobState[ev.id].error">{{ jobState[ev.id].error }}</div>
+          </div>
+
+          <div class="run-panel card" *ngIf="expandedEvidenceId === ev.id">
+            <div class="tab-row">
+              <button class="btn-ghost" [class.active]="detailTab === 'runs'" (click)="setTab('runs')">Pipeline runs</button>
+              <button class="btn-ghost" [class.active]="detailTab === 'events'" (click)="setTab('events')">Events</button>
+            </div>
+
+            <ng-container *ngIf="detailTab === 'runs'">
+              <div *ngIf="runsState[ev.id]?.loading" class="subdued">Loading runs…</div>
+              <div *ngIf="runsState[ev.id] && runsState[ev.id].error" class="error">{{ runsState[ev.id].error }}</div>
+              <div class="runs-layout" *ngIf="runsState[ev.id]?.runs?.length">
+                <aside class="run-rail">
+                  <div class="rail-header">
+                    <div class="eyebrow">Runs</div>
+                    <p class="subdued">Select a run to inspect the execution tree.</p>
+                  </div>
+                  <div class="rail-list">
+                    <div
+                      class="run-rail-item"
+                      *ngFor="let run of runsState[ev.id]?.runs"
+                      [class.active]="runsState[ev.id] && runsState[ev.id].selectedRunId === run.id"
+                      (click)="selectRun(ev.id, run.id)"
+                    >
+                      <div class="rail-top">
+                        <div>
+                          <div class="rail-title">{{ runLabel(run) }}</div>
+                          <div class="subdued">Agent: {{ run.agent_name }} · v{{ run.agent_version || '—' }}</div>
+                        </div>
+                        <span class="badge" [ngClass]="statusBadgeClass(run.status)">{{ run.status }}</span>
+                      </div>
+                      <div class="rail-meta">
+                        <span>{{ run.started_at ? (run.started_at | date:'short') : '—' }}</span>
+                        <span>· {{ runDuration(run.started_at, run.finished_at) }}</span>
+                        <span class="chip">Run {{ shortId(run.id) }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </aside>
+
+                <ng-container *ngIf="activeRun(ev.id) as active">
+                  <div class="run-detail">
+                    <div class="run-summary-card">
+                      <div>
+                        <div class="eyebrow">Execution</div>
+                        <h4>{{ runLabel(active) }}</h4>
+                        <div class="subdued">
+                          Agent {{ active.agent_name }} · Run {{ shortId(active.pipeline_run?.id || active.id) }}
+                        </div>
+                      </div>
+                      <div class="summary-meta">
+                        <span class="badge" [ngClass]="statusBadgeClass(active.status)">{{ active.status }}</span>
+                        <span class="chip">Duration {{ runDuration(active.started_at, active.finished_at) }}</span>
+                        <span class="chip">Started {{ active.started_at ? (active.started_at | date:'short') : '—' }}</span>
+                      </div>
+                    </div>
+
+                    <div class="step-tree">
+                      <div class="tree-row" *ngFor="let step of active.step_logs || []; let last = last">
+                        <div class="tree-rail">
+                          <span
+                            class="tree-dot"
+                            [ngClass]="{
+                              success: step.status === 'completed',
+                              danger: step.status === 'failed',
+                              warn: step.status !== 'completed' && step.status !== 'failed'
+                            }"
+                          ></span>
+                          <span class="tree-line" *ngIf="!last"></span>
+                        </div>
+                        <div class="tree-card">
+                          <div class="tree-card-header">
+                            <div class="tree-title">{{ step.step_name }}</div>
+                            <span class="badge" [ngClass]="statusBadgeClass(step.status)">{{ step.status }}</span>
+                          </div>
+                          <div class="tree-meta">
+                            <span>{{ step.started_at ? (step.started_at | date:'shortTime') : '—' }} → {{ step.finished_at ? (step.finished_at | date:'shortTime') : '—' }}</span>
+                            <span>· {{ stepDuration(step) }}</span>
+                          </div>
+                          <div class="kv-row" *ngIf="summarizePayload(step.output_snapshot).length">
+                            <span class="kv-pill" *ngFor="let pair of summarizePayload(step.output_snapshot)">
+                              <span class="key">{{ pair.key }}</span>
+                              <span class="value">{{ pair.value }}</span>
+                            </span>
+                          </div>
+                          <details class="raw-json" *ngIf="step.output_snapshot">
+                            <summary>Raw output</summary>
+                            <pre>{{ preview(step.output_snapshot) }}</pre>
+                          </details>
+                          <div class="alert danger" *ngIf="step.error">
+                            {{ step.error }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </ng-container>
+              </div>
+
+              <div *ngIf="!runsState[ev.id]?.runs?.length && !runsState[ev.id]?.loading" class="subdued">
+                No runs yet for this evidence.
+              </div>
+            </ng-container>
+
+            <ng-container *ngIf="detailTab === 'events'">
+              <div class="filters" *ngIf="eventTypes(ev.id)?.length">
+                <label>Event type</label>
+                <select
+                  class="input"
+                  [value]="eventsState[ev.id] ? (eventsState[ev.id].filter || 'all') : 'all'"
+                  (change)="setEventFilter(ev.id, $any($event.target).value)"
+                >
+                  <option value="all">All</option>
+                  <option *ngFor="let t of eventTypes(ev.id)" [value]="t">{{ t }}</option>
+                </select>
+              </div>
+              <div *ngIf="eventsState[ev.id]?.loading" class="subdued">Loading events…</div>
+              <div *ngIf="eventsState[ev.id] && eventsState[ev.id].error" class="error">{{ eventsState[ev.id].error }}</div>
+              <ng-container *ngIf="filteredEvents(ev.id) as evEvents">
+                <div class="event-timeline" *ngIf="evEvents.length">
+                  <div class="tree-row" *ngFor="let evn of evEvents; let idx = index">
+                    <div class="tree-rail">
+                      <span class="tree-dot small" [ngClass]="eventTone(evn.event_type)"></span>
+                      <span class="tree-line" *ngIf="idx < evEvents.length - 1"></span>
+                    </div>
+                    <div class="tree-card event-card">
+                      <div class="tree-card-header">
+                        <div class="tree-title">{{ evn.event_type }}</div>
+                        <span class="chip">{{ evn.created_at ? (evn.created_at | date:'short') : '—' }}</span>
+                      </div>
+                      <div class="kv-row" *ngIf="summarizePayload($any(evn.payload)).length">
+                        <span class="kv-pill" *ngFor="let pair of summarizePayload($any(evn.payload))">
+                          <span class="key">{{ pair.key }}</span>
+                          <span class="value">{{ pair.value }}</span>
+                        </span>
+                      </div>
+                      <details class="raw-json" *ngIf="evn.payload">
+                        <summary>Payload</summary>
+                        <pre>{{ preview($any(evn.payload)) }}</pre>
+                      </details>
+                    </div>
+                  </div>
+                </div>
+                <div *ngIf="!evEvents.length && !eventsState[ev.id]?.loading" class="subdued">
+                  No events recorded yet.
+                </div>
+              </ng-container>
+            </ng-container>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="outputs" class="card table-card">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Evidence log</p>
+          <h3>Outputs</h3>
+        </div>
+        <span class="chip">{{ evidenceList.length }} records</span>
+      </div>
+      <div class="table-wrapper">
+        <table class="table" *ngIf="evidenceList.length; else emptyTable">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Status</th>
+              <th>Controls</th>
+              <th>Confidence</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
+              <td>
+                <div class="table-title">{{ displayTitle(ev) }}</div>
+                <div class="subdued">{{ ev.source_type_id || 'source unknown' }}</div>
+              </td>
+              <td>
+                <span class="badge-success" *ngIf="ev.ai_classification">Classified</span>
+                <span class="badge-warn" *ngIf="!ev.ai_classification">Pending</span>
+              </td>
+              <td>
+                <div class="tags" *ngIf="primaryControls(ev).length; else noControls">
+                  <span class="tag" *ngFor="let ctrl of primaryControls(ev)">{{ ctrl }}</span>
+                </div>
+                <ng-template #noControls><span class="subdued">—</span></ng-template>
+              </td>
+              <td>{{ ev.ai_classification?.confidence ? (ev.ai_classification?.confidence | percent:'1.0-1') : '—' }}</td>
+              <td>{{ ev.updated_at ? (ev.updated_at | date:'short') : '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <ng-template #emptyTable>
+          <p class="subdued">No evidence yet.</p>
+        </ng-template>
+      </div>
+    </section>
+  </main>
+
+  <ng-template #otherViews>
+    <ng-container [ngSwitch]="viewMode">
+      <ng-container *ngSwitchCase="'organization'">
+        <main class="page">
+          <div class="card">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Organizations</p>
+                <h3>Manage tenants</h3>
+              </div>
+              <div class="actions">
+                <button class="btn-primary" (click)="showOrgModal = true" [disabled]="!isAdminAnywhere()">
+                  Create organization
+                </button>
+              </div>
+            </div>
+            <div *ngIf="!isAdminAnywhere()" class="subdued">
+              Organization creation is available to admins only.
+            </div>
+            <div class="org-list" *ngIf="organizations.length; else emptyOrgList">
+              <div
+                *ngFor="let org of organizations; trackBy: trackOrgById"
+                class="org-item"
+                [class.active]="org.id === selectedOrgId"
+                (click)="selectOrg(org.id)"
+              >
+                <div>
+                  <div class="org-name">{{ org.name }}</div>
+                  <div class="subdued">{{ org.domain || 'No domain' }}</div>
+                </div>
+                <span class="chip">{{ org.plan || 'free' }}</span>
+              </div>
+            </div>
+            <ng-template #emptyOrgList>
+              <p class="subdued">No organizations yet. Use the button above to add one.</p>
+            </ng-template>
+          </div>
+
+          <div class="card" *ngIf="selectedOrgId">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Active organization</p>
+                <h3>{{ organizationName(selectedOrgId) }}</h3>
+              </div>
+              <span class="chip">Role: {{ roleForOrg(selectedOrgId) || 'unknown' }}</span>
+            </div>
+            <p class="subdued">Members now live under User management. Prompts and models are available in Settings.</p>
+          </div>
+
+          <div class="modal-backdrop" *ngIf="showOrgModal">
+            <div class="modal card">
+              <div class="modal-header">
+                <h3>Create organization</h3>
+                <button class="btn-ghost" (click)="showOrgModal = false">Close</button>
+              </div>
+              <app-organization-form
+                [orgForm]="orgForm"
+                [loading]="loading.createOrg"
+                [isAdmin]="isAdminAnywhere()"
+                (createOrg)="submitOrganization()"
+              ></app-organization-form>
+            </div>
+          </div>
+        </main>
+      </ng-container>
+
+      <ng-container *ngSwitchCase="'user-management'">
+        <main class="page">
+          <div class="card">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">User management</p>
+                <h3>Members</h3>
+              </div>
+              <div class="actions">
+                <label class="subdued">Organization</label>
+                <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+                  <option value="" disabled>Select organization</option>
+                  <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+                </select>
+              </div>
+            </div>
+            <p class="subdued">Review and manage memberships per organization.</p>
+          </div>
+
+          <app-user-management
+            *ngIf="selectedOrgId; else noOrgSelected"
+            [organizationName]="organizationName(selectedOrgId)"
+            [roleLabel]="roleForOrg(selectedOrgId)"
+            [members]="membershipState[selectedOrgId].members || []"
+            [loading]="membershipState[selectedOrgId].loading || false"
+            [error]="membershipState[selectedOrgId].error || null"
+            [isAdmin]="isAdminForOrg(selectedOrgId)"
+            [inviteForm]="inviteForm"
+            (invite)="inviteMember()"
+            (deactivate)="deactivateMember($event)"
+          ></app-user-management>
+
+          <ng-template #noOrgSelected>
+            <div class="card">
+              <p class="subdued">Select an organization to view members.</p>
+            </div>
+          </ng-template>
+        </main>
+      </ng-container>
+
+      <ng-container *ngSwitchCase="'tasks'">
+        <main class="page">
+          <div class="card">
+            <div class="section-header">
+              <div>
+                <p class="eyebrow">Tasks</p>
+                <h3>Auto-created follow-ups</h3>
+              </div>
+              <div class="actions">
+                <label class="subdued">Organization</label>
+                <select class="input" [value]="selectedOrgId || ''" (change)="selectOrg($any($event.target).value)">
+                  <option value="" disabled>Select organization</option>
+                  <option *ngFor="let org of organizations; trackBy: trackOrgById" [value]="org.id">{{ org.name }}</option>
+                </select>
+                <button class="btn-ghost" type="button" (click)="loadTasks()" [disabled]="!selectedOrgId || tasksLoading">
+                  {{ tasksLoading ? 'Loading…' : 'Reload tasks' }}
+                </button>
+              </div>
+            </div>
+            <p class="subdued">Tasks are created automatically when controls are matched.</p>
+          </div>
+          <app-task-management
+            *ngIf="selectedOrgId; else noTasksOrg"
+            [tasks]="tasks"
+            [loading]="tasksLoading"
+            [error]="tasksError"
+          ></app-task-management>
+          <ng-template #noTasksOrg>
+            <div class="card">
+              <p class="subdued">Select an organization to view tasks.</p>
+            </div>
+          </ng-template>
+        </main>
+      </ng-container>
+
+      <ng-container *ngSwitchCase="'settings'">
+        <main class="page">
+          <div class="tab-row">
+            <button class="btn-ghost" [class.active]="settingsTab === 'prompts'" (click)="setSettingsTab('prompts')">
+              Prompts
+            </button>
+            <button class="btn-ghost" [class.active]="settingsTab === 'models'" (click)="setSettingsTab('models')">
+              Models
             </button>
           </div>
-        </div>
 
-        <div class="stages">
-          <div class="stage" *ngFor="let stage of getPipelineState(ev)">
-            <div class="dot" [class.done]="stage.status === 'done'" [class.active]="stage.status === 'active'"></div>
-            <div>
-              <div class="stage-title">{{ stage.label }}</div>
-              <div class="subdued">{{ stage.detail }}</div>
-            </div>
-          </div>
-        </div>
+          <app-prompt-management
+            *ngIf="settingsTab === 'prompts'"
+            [prompts]="prompts"
+            [loading]="registryLoading.prompts"
+            [error]="registryError.prompts || null"
+            [promptForm]="promptForm"
+            [isAdmin]="isAdminAnywhere()"
+            (savePrompt)="savePrompt()"
+          ></app-prompt-management>
 
-        <div class="controls" *ngIf="primaryControls(ev).length">
-          <div class="label">Primary controls</div>
-          <div class="tags">
-            <span class="tag" *ngFor="let control of primaryControls(ev)">{{ control }}</span>
-          </div>
-        </div>
-        <div class="controls" *ngIf="ev.ai_classification?.cache_hit">
-          <div class="label">Cache hit</div>
-          <div class="subdued">Matched prior evidence ({{ ev.ai_classification?.similarity | number:'1.2-2' }} similarity)</div>
-        </div>
-        <div class="controls" *ngIf="ev.ai_classification?.pipeline_run_id">
-          <div class="label">Pipeline run</div>
-          <div class="subdued">Run ID: {{ ev.ai_classification?.pipeline_run_id }}</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="card table-card">
-    <div class="section-header">
-      <div>
-        <p class="eyebrow">Evidence log</p>
-        <h3>Outputs</h3>
-      </div>
-      <span class="chip">{{ evidenceList.length }} records</span>
-    </div>
-    <div class="table-wrapper">
-      <table class="table" *ngIf="evidenceList.length; else emptyTable">
-        <thead>
-          <tr>
-            <th>Title</th>
-            <th>Status</th>
-            <th>Controls</th>
-            <th>Confidence</th>
-            <th>Updated</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let ev of evidenceList; trackBy: trackEvidenceById">
-            <td>
-              <div class="table-title">{{ ev.title }}</div>
-              <div class="subdued">{{ ev.source_type_id || 'source unknown' }}</div>
-            </td>
-            <td>
-              <span class="badge-success" *ngIf="ev.ai_classification">Classified</span>
-              <span class="badge-warn" *ngIf="!ev.ai_classification">Pending</span>
-            </td>
-            <td>
-              <div class="tags" *ngIf="primaryControls(ev).length; else noControls">
-                <span class="tag" *ngFor="let ctrl of primaryControls(ev)">{{ ctrl }}</span>
-              </div>
-              <ng-template #noControls><span class="subdued">—</span></ng-template>
-            </td>
-            <td>{{ ev.ai_classification?.confidence ? (ev.ai_classification?.confidence | percent:'1.0-1') : '—' }}</td>
-            <td>{{ ev.updated_at ? (ev.updated_at | date:'short') : '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <ng-template #emptyTable>
-        <p class="subdued">No evidence yet.</p>
-      </ng-template>
-    </div>
-  </section>
+          <app-model-management
+            *ngIf="settingsTab === 'models'"
+            [models]="models"
+            [loading]="registryLoading.models"
+            [error]="registryError.models || null"
+            [modelForm]="modelForm"
+            [isAdmin]="isAdminAnywhere()"
+            (saveModel)="saveModel()"
+          ></app-model-management>
+        </main>
+      </ng-container>
+    </ng-container>
+  </ng-template>
 </div>
 
 <ng-template #authPanel>

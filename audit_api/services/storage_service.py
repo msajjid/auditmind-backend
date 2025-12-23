@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from django.conf import settings
@@ -34,3 +35,24 @@ class EvidenceStorageService:
         uri = f"local://uploads/{organization_id}/{evidence_id}/{filename}"
         size = len(content.encode("utf-8"))
         return uri, size
+
+    def write_uploaded_file(
+        self,
+        organization_id,
+        evidence_id,
+        *,
+        filename: str,
+        data: bytes,
+    ) -> tuple[str, int, str]:
+        base_dir: Path = settings.EVIDENCE_UPLOAD_DIR
+        target_dir = base_dir / str(organization_id) / str(evidence_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = Path(filename).name or "upload.bin"
+        file_path = target_dir / safe_name
+        file_path.write_bytes(data)
+
+        checksum = hashlib.sha256(data).hexdigest()
+        uri = f"local://uploads/{organization_id}/{evidence_id}/{safe_name}"
+        size = len(data)
+        return uri, size, checksum

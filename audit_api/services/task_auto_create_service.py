@@ -1,5 +1,6 @@
 from typing import Iterable, List
 from audit_api.models import Evidence, Control, Task
+from audit_api.tasks import enqueue_task_processing
 
 
 class TaskAutoCreateService:
@@ -31,6 +32,7 @@ class TaskAutoCreateService:
                 organization=evidence.organization,
                 framework=control.framework,
                 control=control,
+                evidence=evidence,
                 title=title,
                 description=(
                     "Auto-created from evidence classification.\n\n"
@@ -40,5 +42,10 @@ class TaskAutoCreateService:
                 status="open",
             )
             created.append(task)
+            try:
+                enqueue_task_processing(str(task.id))
+            except Exception:
+                # Do not block pipeline on queue issues
+                pass
 
         return created

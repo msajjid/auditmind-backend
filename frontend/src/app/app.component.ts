@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 
 import {
@@ -11,8 +11,21 @@ import {
   EvidenceResponse,
   Organization,
   OrganizationMembership,
+  AgentRunWithSteps,
+  AiPipelineRun,
+  EvidenceEvent,
+  OrganizationMembershipDetail,
+  JobStatus,
+  PromptTemplate,
+  ModelEntry,
+  TaskItem,
 } from './models';
 import { ApiService } from './services/api.service';
+import { OrganizationFormComponent } from './organization-form.component';
+import { UserManagementComponent } from './user-management.component';
+import { PromptManagementComponent } from './prompt-management.component';
+import { ModelManagementComponent } from './model-management.component';
+import { TaskManagementComponent } from './task-management.component';
 
 interface PipelineStage {
   key: string;
@@ -20,15 +33,40 @@ interface PipelineStage {
   detail: string;
 }
 
+interface KeyValuePair {
+  key: string;
+  value: string;
+}
+
+type ThemePreference = 'light' | 'dark' | 'system';
+type ActiveTheme = 'light' | 'dark';
+
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    OrganizationFormComponent,
+    UserManagementComponent,
+    PromptManagementComponent,
+    ModelManagementComponent,
+    TaskManagementComponent,
+  ],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.css'],
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, OnDestroy {
   title = 'AuditMind Evidence Cockpit';
+  themePreference: ThemePreference = 'system';
+  resolvedTheme: ActiveTheme = 'dark';
+  private systemMediaQuery?: MediaQueryList;
+  private systemMediaHandler = () => {
+    if (this.themePreference === 'system') {
+      this.applyTheme();
+    }
+  };
+  private daylightTimer: any;
 
   organizations: Organization[] = [];
   evidenceList: Evidence[] = [];
@@ -37,6 +75,11 @@ export class AppComponent implements OnInit {
   currentUser: AuthUser | null = null;
   authToken: string | null = null;
   authMode: 'login' | 'signup' = 'signup';
+  viewMode: 'dashboard' | 'organization' | 'user-management' | 'settings' | 'tasks' = 'dashboard';
+  showOrgModal = false;
+  expandedEvidenceId: string | null = null;
+  detailTab: 'runs' | 'events' = 'runs';
+  settingsTab: 'prompts' | 'models' = 'prompts';
 
   loading = {
     orgs: false,
@@ -47,7 +90,27 @@ export class AppComponent implements OnInit {
   };
 
   toast: { kind: 'success' | 'error' | 'info'; message: string } | null = null;
-  rawJsonError: string | null = null;
+  stageInfoOpenId: string | null = null;
+  runsState: Record<
+    string,
+    { runs: AgentRunWithSteps[]; loading: boolean; error?: string | null; selectedRunId?: string | null }
+  > = {};
+  eventsState: Record<
+    string,
+    { events: EvidenceEvent[]; loading: boolean; error?: string | null; filter?: string | 'all' }
+  > = {};
+  membershipState: Record<string, { members: OrganizationMembershipDetail[]; loading: boolean; error?: string | null }> = {};
+  jobState: Record<string, JobStatus & { lastChecked?: number }> = {};
+  jobTimers: Record<string, any> = {};
+  prompts: PromptTemplate[] = [];
+  models: ModelEntry[] = [];
+  registryLoading = { prompts: false, models: false };
+  registryError: { prompts?: string | null; models?: string | null } = {};
+  tasks: TaskItem[] = [];
+  tasksLoading = false;
+  tasksError: string | null = null;
+  selectedFile: File | null = null;
+  fileError: string | null = null;
 
   loginForm = this.fb.group({
     email: ['', Validators.required],
@@ -70,9 +133,27 @@ export class AppComponent implements OnInit {
   });
 
   evidenceForm = this.fb.group({
-    rawMode: ['text'],
-    raw_text: ['', Validators.required],
-    raw_json: [''],
+  });
+
+  inviteForm = this.fb.group({
+    email: ['', [Validators.required, Validators.email]],
+    role: ['member', Validators.required],
+  });
+
+  promptForm = this.fb.group({
+    name: ['', Validators.required],
+    version: ['', Validators.required],
+    content: ['', Validators.required],
+    metadata: [''],
+  });
+
+  modelForm = this.fb.group({
+    name: ['', Validators.required],
+    provider: ['', Validators.required],
+    version: ['', Validators.required],
+    model_type: ['llm'],
+    embedding_dims: [''],
+    metadata: [''],
   });
 
   pipelineStages: PipelineStage[] = [
@@ -87,11 +168,25 @@ export class AppComponent implements OnInit {
   constructor(private api: ApiService, private fb: FormBuilder) {}
 
   ngOnInit(): void {
+    this.initTheme();
     const stored = localStorage.getItem('am_token');
     if (stored) {
       this.authToken = stored;
       this.fetchProfile();
     }
+  }
+
+  ngOnDestroy(): void {
+    this.teardownSystemListener();
+    if (this.daylightTimer) {
+      clearInterval(this.daylightTimer);
+    }
+  }
+
+  setThemePreference(pref: ThemePreference): void {
+    this.themePreference = pref;
+    localStorage.setItem('am_theme_pref', pref);
+    this.applyTheme(true);
   }
 
   loadOrganizations(): void {
@@ -105,6 +200,10 @@ export class AppComponent implements OnInit {
         if (!this.selectedOrgId && orgs.length) {
           this.selectedOrgId = orgs[0].id;
           this.loadEvidence();
+          this.loadMemberships(orgs[0].id);
+        }
+        if (orgs.length) {
+          this.loadRegistry();
         }
       },
       error: () => {
@@ -125,6 +224,74 @@ export class AppComponent implements OnInit {
         this.logout();
       },
     });
+  }
+
+  private initTheme(): void {
+    const stored = localStorage.getItem('am_theme_pref');
+    if (stored === 'light' || stored === 'dark' || stored === 'system') {
+      this.themePreference = stored;
+    }
+    this.applyTheme(true);
+  }
+
+  private resolveTheme(): ActiveTheme {
+    if (this.themePreference === 'light' || this.themePreference === 'dark') {
+      return this.themePreference;
+    }
+    const prefersDark = typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false;
+    if (prefersDark) {
+      return 'dark';
+    }
+    const hour = new Date().getHours();
+    return hour >= 7 && hour < 19 ? 'light' : 'dark';
+  }
+
+  private applyTheme(setupListeners = false): void {
+    this.resolvedTheme = this.resolveTheme();
+    document.documentElement.setAttribute('data-theme', this.resolvedTheme);
+
+    if (this.themePreference === 'system') {
+      if (setupListeners) {
+        this.setupSystemListener();
+        this.startDaylightTimer();
+      }
+    } else {
+      this.teardownSystemListener();
+      if (this.daylightTimer) {
+        clearInterval(this.daylightTimer);
+        this.daylightTimer = null;
+      }
+    }
+  }
+
+  private setupSystemListener(): void {
+    if (typeof window === 'undefined' || !window.matchMedia) {
+      return;
+    }
+    if (!this.systemMediaQuery) {
+      this.systemMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      this.systemMediaQuery.addEventListener('change', this.systemMediaHandler);
+    }
+  }
+
+  private teardownSystemListener(): void {
+    if (this.systemMediaQuery) {
+      this.systemMediaQuery.removeEventListener('change', this.systemMediaHandler);
+      this.systemMediaQuery = undefined;
+    }
+  }
+
+  private startDaylightTimer(): void {
+    if (this.daylightTimer) {
+      return;
+    }
+    this.daylightTimer = setInterval(() => {
+      if (this.themePreference === 'system') {
+        this.applyTheme();
+      }
+    }, 30 * 60 * 1000);
   }
 
   private handleAuthSuccess(res: AuthResponse): void {
@@ -178,12 +345,18 @@ export class AppComponent implements OnInit {
     this.organizations = [];
     this.evidenceList = [];
     this.selectedOrgId = null;
+    this.viewMode = 'dashboard';
+    this.showOrgModal = false;
     localStorage.removeItem('am_token');
   }
 
   selectOrg(orgId: string): void {
     this.selectedOrgId = orgId;
     this.loadEvidence();
+    this.loadMemberships(orgId);
+    if (this.viewMode === 'tasks') {
+      this.loadTasks();
+    }
   }
 
   loadEvidence(): void {
@@ -198,6 +371,63 @@ export class AppComponent implements OnInit {
       },
       error: () => this.setToast('error', 'Failed to load evidence for this organization.'),
       complete: () => (this.loading.evidence = false),
+    });
+  }
+
+  loadTasks(): void {
+    if (!this.selectedOrgId) return;
+    this.tasksLoading = true;
+    this.tasksError = null;
+    this.api.getTasks(this.selectedOrgId).subscribe({
+      next: (items) => {
+        this.tasks = items;
+      },
+      error: () => {
+        this.tasksError = 'Unable to load tasks.';
+      },
+      complete: () => (this.tasksLoading = false),
+    });
+  }
+
+  loadMemberships(orgId?: string | null): void {
+    const target = orgId ?? this.selectedOrgId;
+    if (!target) return;
+    this.membershipState[target] = { members: [], loading: true, error: null };
+    this.api.getMemberships(target).subscribe({
+      next: (members) => {
+        this.membershipState[target] = { members, loading: false, error: null };
+      },
+      error: () => {
+        this.membershipState[target] = { members: [], loading: false, error: 'Unable to load members' };
+      },
+    });
+  }
+
+  loadRegistry(): void {
+    this.registryLoading.prompts = true;
+    this.registryError.prompts = null;
+    this.api.getPrompts().subscribe({
+      next: (prompts) => {
+        this.prompts = prompts;
+        this.registryLoading.prompts = false;
+      },
+      error: () => {
+        this.registryLoading.prompts = false;
+        this.registryError.prompts = 'Unable to load prompts';
+      },
+    });
+
+    this.registryLoading.models = true;
+    this.registryError.models = null;
+    this.api.getModels().subscribe({
+      next: (models) => {
+        this.models = models;
+        this.registryLoading.models = false;
+      },
+      error: () => {
+        this.registryLoading.models = false;
+        this.registryError.models = 'Unable to load models';
+      },
     });
   }
 
@@ -224,6 +454,7 @@ export class AppComponent implements OnInit {
         this.organizations = [org, ...this.organizations];
         this.selectedOrgId = org.id;
         this.orgForm.reset({ plan: 'free' });
+        this.showOrgModal = false;
         this.setToast('success', `Created organization ${org.name}.`);
         this.loadEvidence();
       },
@@ -241,39 +472,21 @@ export class AppComponent implements OnInit {
       this.setToast('error', 'Select or create an organization first.');
       return;
     }
-
-    const rawMode = this.evidenceForm.value.rawMode;
-    const payload: EvidenceCreatePayload = {
-      organization_id: this.selectedOrgId,
-    };
-
-    if (rawMode === 'json') {
-      try {
-        payload.raw_json = this.evidenceForm.value.raw_json
-          ? JSON.parse(this.evidenceForm.value.raw_json)
-          : {};
-        this.rawJsonError = null;
-      } catch (err) {
-        this.rawJsonError = 'Invalid JSON payload.';
-        return;
-      }
-    } else {
-      const rawText = this.evidenceForm.value.raw_text?.trim();
-      if (rawText) {
-        payload.raw_text = rawText;
-      }
-    }
-
-    if (!payload.raw_text && payload.raw_json === undefined) {
-      this.setToast('error', 'Provide either raw text or valid JSON content.');
+    if (!this.selectedFile) {
+      this.setToast('error', 'Select a file to upload.');
       return;
     }
 
+    const formData = new FormData();
+    formData.append('organization_id', this.selectedOrgId);
+    formData.append('file', this.selectedFile);
+    formData.append('title', this.selectedFile.name);
+
     this.loading.upload = true;
-    this.api.uploadEvidence(payload).subscribe({
+    this.api.uploadEvidenceFile(formData).subscribe({
       next: (res: EvidenceResponse) => {
         this.mergeEvidence(res.evidence, res.classification);
-        this.evidenceForm.reset({ rawMode: 'text' });
+        this.selectedFile = null;
         this.setToast('success', 'Evidence uploaded and classified.');
       },
       error: () => this.setToast('error', 'Upload failed. Ensure backend is reachable.'),
@@ -295,6 +508,50 @@ export class AppComponent implements OnInit {
       error: () => this.setToast('error', 'Classification failed for this evidence.'),
       complete: () => (this.loading.classifyId = null),
     });
+  }
+
+  classifyEvidenceAsync(evidenceId: string): void {
+    if (!this.authToken) {
+      this.setToast('error', 'Sign in first.');
+      return;
+    }
+    this.jobState[evidenceId] = { job_id: '', status: 'queued', evidence_id: evidenceId };
+    this.api.classifyEvidenceAsync(evidenceId).subscribe({
+      next: (resp) => {
+        this.jobState[evidenceId] = { ...resp, evidence_id: evidenceId };
+        this.pollJob(evidenceId, resp.job_id);
+        this.setToast('info', 'Classification queued.');
+      },
+      error: () => {
+        this.jobState[evidenceId] = { job_id: '', status: 'failed', evidence_id: evidenceId, error: 'Unable to queue job' };
+        this.setToast('error', 'Unable to queue async job.');
+      },
+    });
+  }
+
+  pollJob(evidenceId: string, jobId: string): void {
+    if (this.jobTimers[evidenceId]) {
+      clearTimeout(this.jobTimers[evidenceId]);
+    }
+    const tick = () => {
+      this.api.getJobStatus(jobId).subscribe({
+        next: (status) => {
+          this.jobState[evidenceId] = { ...status, evidence_id: evidenceId, lastChecked: Date.now() };
+          if (status.status === 'finished' && status.result && typeof status.result === 'object') {
+            this.applyClassification(evidenceId, status.result as any);
+            return;
+          }
+          if (status.status === 'failed') {
+            return;
+          }
+          this.jobTimers[evidenceId] = setTimeout(tick, 1500);
+        },
+        error: () => {
+          this.jobState[evidenceId] = { job_id: jobId, status: 'failed', evidence_id: evidenceId, error: 'Poll failed' };
+        },
+      });
+    };
+    this.jobTimers[evidenceId] = setTimeout(tick, 1500);
   }
 
   mergeEvidence(evidence: Evidence, classification?: ClassificationResult): void {
@@ -329,6 +586,106 @@ export class AppComponent implements OnInit {
     }));
   }
 
+  // ---------- Pipeline runs + events ----------
+  toggleDetail(evidenceId: string): void {
+    if (this.expandedEvidenceId === evidenceId) {
+      this.expandedEvidenceId = null;
+      return;
+    }
+    this.expandedEvidenceId = evidenceId;
+    this.detailTab = 'runs';
+    this.ensureTimeline(evidenceId);
+  }
+
+  ensureTimeline(evidenceId: string): void {
+    const state = this.runsState[evidenceId];
+    if (state?.runs?.length && !state.loading && this.eventsState[evidenceId]?.events?.length) return;
+
+    this.runsState[evidenceId] = { runs: [], loading: true, error: null, selectedRunId: null };
+    this.eventsState[evidenceId] = { events: [], loading: true, error: null, filter: 'all' };
+
+    this.api.getTimelineForEvidence(evidenceId).subscribe({
+      next: (resp) => {
+        this.runsState[evidenceId] = {
+          runs: resp.runs,
+          loading: false,
+          error: null,
+          selectedRunId: resp.runs.length ? resp.runs[0].id : null,
+        };
+        this.eventsState[evidenceId] = { events: resp.events, loading: false, error: null, filter: 'all' };
+      },
+      error: () => {
+        this.runsState[evidenceId] = { runs: [], loading: false, error: 'Unable to load runs', selectedRunId: null };
+        this.eventsState[evidenceId] = { events: [], loading: false, error: 'Unable to load events', filter: 'all' };
+      },
+    });
+  }
+
+  ensureEvents(evidenceId: string): void {
+    const state = this.eventsState[evidenceId];
+    if (state?.events?.length && !state.loading) return;
+    this.eventsState[evidenceId] = { events: [], loading: true, error: null, filter: 'all' };
+    // now loaded via ensureTimeline; keep method for safety/no-op
+    this.eventsState[evidenceId] = { events: state?.events || [], loading: false, error: state?.error, filter: 'all' };
+  }
+
+  selectRun(evidenceId: string, runId: string): void {
+    const state = this.runsState[evidenceId];
+    if (!state) return;
+    this.runsState[evidenceId] = { ...state, selectedRunId: runId };
+  }
+
+  activeRun(evidenceId: string): AgentRunWithSteps | null {
+    const state = this.runsState[evidenceId];
+    if (!state?.runs?.length || !state.selectedRunId) return null;
+    return state.runs.find((r) => r.id === state.selectedRunId) || null;
+  }
+
+  runDuration(start?: string, end?: string): string {
+    if (!start || !end) return '—';
+    const s = new Date(start).getTime();
+    const f = new Date(end).getTime();
+    if (Number.isNaN(s) || Number.isNaN(f) || f < s) return '—';
+    const secs = Math.max(0, (f - s) / 1000);
+    if (secs < 1) return `${Math.round(secs * 1000)} ms`;
+    if (secs < 60) return `${secs.toFixed(1)} s`;
+    const mins = secs / 60;
+    return `${mins.toFixed(1)} m`;
+  }
+
+  stepDuration(step: { started_at?: string; finished_at?: string }): string {
+    return this.runDuration(step.started_at, step.finished_at);
+  }
+
+  preview(obj?: Record<string, unknown> | null): string {
+    if (!obj) return '—';
+    try {
+      const s = JSON.stringify(obj, null, 2);
+      return s.length > 320 ? s.slice(0, 320) + '…' : s;
+    } catch {
+      return '—';
+    }
+  }
+
+  eventTypes(evidenceId: string): string[] {
+    const state = this.eventsState[evidenceId];
+    if (!state) return [];
+    const uniq = Array.from(new Set(state.events.map((e) => e.event_type)));
+    return uniq;
+  }
+
+  filteredEvents(evidenceId: string): EvidenceEvent[] {
+    const state = this.eventsState[evidenceId];
+    if (!state) return [];
+    const filter = state.filter || 'all';
+    const events = filter === 'all' ? state.events : state.events.filter((e) => e.event_type === filter);
+    return [...events].sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    });
+  }
+
   primaryControls(evidence: Evidence): string[] {
     return evidence.ai_classification?.primary_controls || [];
   }
@@ -357,10 +714,377 @@ export class AppComponent implements OnInit {
     return this.memberships.some((m) => m.organization.id === target && m.role === 'admin');
   }
 
+  roleForOrg(orgId?: string | null): 'admin' | 'member' | 'viewer' | null {
+    const target = orgId || this.selectedOrgId;
+    if (!target) return null;
+    const mem = this.memberships.find((m) => m.organization.id === target);
+    return mem ? mem.role : null;
+  }
+
+  canContribute(orgId?: string | null): boolean {
+    const role = this.roleForOrg(orgId);
+    return role === 'admin' || role === 'member';
+  }
+
+  isAdminAnywhere(): boolean {
+    return this.memberships.some((m) => m.role === 'admin');
+  }
+
+  setView(mode: 'dashboard' | 'organization' | 'user-management' | 'settings' | 'tasks'): void {
+    this.viewMode = mode;
+    if (mode === 'user-management' && this.selectedOrgId) {
+      this.loadMemberships(this.selectedOrgId);
+    }
+    if (mode === 'settings') {
+      this.loadRegistry();
+    }
+    if (mode === 'tasks' && this.selectedOrgId) {
+      this.loadTasks();
+    }
+  }
+
+  setSettingsTab(tab: 'prompts' | 'models'): void {
+    this.settingsTab = tab;
+    this.loadRegistry();
+  }
+
+  setTab(tab: 'runs' | 'events'): void {
+    this.detailTab = tab;
+  }
+
+  setEventFilter(evidenceId: string, filter: string): void {
+    const state = this.eventsState[evidenceId];
+    if (!state) return;
+    this.eventsState[evidenceId] = { ...state, filter };
+  }
+
+  toggleStageInfo(evidenceId: string): void {
+    this.stageInfoOpenId = this.stageInfoOpenId === evidenceId ? null : evidenceId;
+  }
+
   private setToast(kind: 'success' | 'error' | 'info', message: string): void {
     this.toast = { kind, message };
     setTimeout(() => {
       this.toast = null;
     }, 4200);
+  }
+
+  summarizePayload(obj?: Record<string, unknown> | null, limit = 4): KeyValuePair[] {
+    if (!obj) return [];
+    const pairs: KeyValuePair[] = [];
+    for (const [key, value] of Object.entries(obj)) {
+      const rendered = this.renderValue(value);
+      if (rendered) {
+        pairs.push({ key, value: rendered });
+      }
+      if (pairs.length >= limit) break;
+    }
+    return pairs;
+  }
+
+  eventTone(eventType?: string): 'success' | 'warn' | 'danger' {
+    if (!eventType) return 'warn';
+    const lower = eventType.toLowerCase();
+    if (lower.includes('fail') || lower.includes('error')) return 'danger';
+    if (lower.includes('queue') || lower.includes('start')) return 'warn';
+    return 'success';
+  }
+
+  statusBadgeClass(status?: string | null): string {
+    const tone = (status || '').toLowerCase();
+    if (!tone) return 'badge-warn';
+    if (tone.includes('fail') || tone.includes('error')) return 'badge-danger';
+    if (tone.includes('complete') || tone.includes('success')) return 'badge-success';
+    return 'badge-warn';
+  }
+
+  runLabel(
+    run?: {
+      pipeline_run?: AiPipelineRun | null;
+      agent_name?: string | null;
+      id?: string | null;
+      started_at?: string | null;
+      created_at?: string | null;
+    } | null,
+  ): string {
+    if (!run) return 'Run';
+    const typeRaw = run.pipeline_run?.pipeline_type || run.agent_name || 'Run';
+    const typeLabel = this.humanizeLabel(typeRaw);
+    const timestamp = this.runTimestamp(run);
+    return timestamp ? `${timestamp} · ${typeLabel}` : typeLabel;
+  }
+
+  shortId(id?: string | null): string {
+    if (!id) return '—';
+    return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+  }
+
+  private runTimestamp(run: {
+    pipeline_run?: AiPipelineRun | null;
+    started_at?: string | null;
+    created_at?: string | null;
+  }): string {
+    const ts = run.started_at || run.pipeline_run?.started_at || run.pipeline_run?.created_at || run.created_at;
+    return ts ? this.formatTimestamp(ts) : '';
+  }
+
+  private formatTimestamp(value?: string | null): string {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '';
+    return parsed.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  private humanizeLabel(text: string): string {
+    const cleaned = text.replace(/[_-]+/g, ' ').trim();
+    if (!cleaned) return 'Run';
+    return cleaned
+      .split(' ')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  displayTitle(evidence: Evidence): string {
+    const controls = this.primaryControls(evidence);
+    const controlLabel = this.primaryControlLabel(controls);
+    const tag = evidence.tags?.find((t) => t && t.trim());
+    if (tag) {
+      return this.composeTitle(tag.trim(), controlLabel, 30);
+    }
+
+    const raw = evidence.title?.trim() || '';
+    if (raw && !this.looksLikeJson(raw)) {
+      return this.composeTitle(raw, controlLabel, 42);
+    }
+
+    if (raw && this.looksLikeJson(raw)) {
+      const jsonTitle = this.titleFromJson(raw);
+      if (jsonTitle) {
+        return this.composeTitle(jsonTitle, controlLabel, 42);
+      }
+    }
+
+    if (evidence.description?.trim()) {
+      return this.composeTitle(evidence.description.trim(), controlLabel, 42);
+    }
+
+    if (evidence.extracted_text?.trim()) {
+      return this.composeTitle(evidence.extracted_text.trim(), controlLabel, 42);
+    }
+
+    if (controlLabel) {
+      return `${controlLabel} evidence`;
+    }
+
+    return `Evidence ${this.shortId(evidence.id)}`;
+  }
+
+  private composeTitle(body: string, controlLabel?: string | null, maxLength = 60): string {
+    let budget = maxLength;
+    if (controlLabel) {
+      // Reserve space so the control hint + title stay compact.
+      budget = Math.max(24, maxLength - controlLabel.length - 3);
+    }
+    const trimmed = this.truncateLabel(body, budget);
+    return controlLabel ? `${controlLabel} · ${trimmed}` : trimmed;
+  }
+
+  private truncateLabel(text: string, maxLength = 60): string {
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean.length <= maxLength) return clean;
+    const softCut = clean.slice(0, maxLength);
+    const lastSpace = softCut.lastIndexOf(' ');
+    const sliced = lastSpace > 40 ? softCut.slice(0, lastSpace) : softCut;
+    return `${sliced}…`;
+  }
+
+  private primaryControlLabel(controls: string[]): string | null {
+    if (!controls || !controls.length) return null;
+    return controls.length === 1 ? controls[0] : `${controls[0]} +${controls.length - 1}`;
+  }
+
+  private looksLikeJson(text: string): boolean {
+    const trimmed = text.trim();
+    return (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    );
+  }
+
+  private titleFromJson(raw: string): string | null {
+    try {
+      const parsed = JSON.parse(raw);
+      return this.extractJsonTitle(parsed);
+    } catch {
+      return null;
+    }
+  }
+
+  private extractJsonTitle(value: unknown): string | null {
+    if (!value) return null;
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const candidate = this.extractJsonTitle(item);
+        if (candidate) return candidate;
+      }
+      return null;
+    }
+    if (typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+      const fields = [
+        'title',
+        'name',
+        'summary',
+        'description',
+        'id',
+        'resource',
+        'arn',
+        'bucket',
+        'path',
+        'file',
+        'eventName',
+        'detail-type',
+        'policyName',
+        'rule',
+      ];
+      for (const key of fields) {
+        const candidate = obj[key];
+        if (typeof candidate === 'string' && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+      const stringValues = Object.values(obj).filter((v) => typeof v === 'string' && v.trim()) as string[];
+      if (stringValues.length) return stringValues[0].trim();
+    }
+    return null;
+  }
+
+  private renderValue(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') {
+      return value.length > 80 ? `${value.slice(0, 77)}…` : value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return `Array(${value.length})`;
+    if (typeof value === 'object') {
+      const keys = Object.keys(value as Record<string, unknown>);
+      return keys.length ? `Object(${keys.slice(0, 3).join(', ')})` : 'Object';
+    }
+    return '';
+  }
+
+  inviteMember(): void {
+    if (!this.selectedOrgId) return;
+    if (this.inviteForm.invalid) {
+        this.inviteForm.markAllAsTouched();
+        return;
+    }
+    this.api
+      .inviteMember(this.selectedOrgId, {
+        email: this.inviteForm.value.email as string,
+        role: this.inviteForm.value.role as 'admin' | 'member' | 'viewer',
+      })
+      .subscribe({
+      next: () => {
+        this.setToast('success', 'Invitation updated/created.');
+        this.inviteForm.reset({ role: 'member' });
+        this.loadMemberships(this.selectedOrgId);
+      },
+      error: () => this.setToast('error', 'Unable to invite member.'),
+    });
+  }
+
+  deactivateMember(membershipId: string): void {
+    if (!this.selectedOrgId) return;
+    this.api.deactivateMember(this.selectedOrgId, membershipId).subscribe({
+      next: () => {
+        this.setToast('success', 'Member deactivated.');
+        this.loadMemberships(this.selectedOrgId);
+      },
+      error: () => this.setToast('error', 'Unable to deactivate member.'),
+    });
+  }
+
+  savePrompt(): void {
+    if (this.promptForm.invalid) {
+      this.promptForm.markAllAsTouched();
+      return;
+    }
+    let metadata: any = undefined;
+    const meta = this.promptForm.value.metadata as string;
+    if (meta && meta.trim()) {
+      try {
+        metadata = JSON.parse(meta);
+      } catch {
+        this.setToast('error', 'Prompt metadata must be valid JSON.');
+        return;
+      }
+    }
+    this.api
+      .createPrompt({
+        name: this.promptForm.value.name as string,
+        version: this.promptForm.value.version as string,
+        content: this.promptForm.value.content as string,
+        metadata,
+      })
+      .subscribe({
+        next: () => {
+          this.setToast('success', 'Prompt saved.');
+          this.promptForm.reset({ metadata: '' });
+          this.loadRegistry();
+        },
+        error: () => this.setToast('error', 'Unable to save prompt.'),
+      });
+  }
+
+  saveModel(): void {
+    if (this.modelForm.invalid) {
+      this.modelForm.markAllAsTouched();
+      return;
+    }
+    let metadata: any = undefined;
+    const meta = this.modelForm.value.metadata as string;
+    if (meta && meta.trim()) {
+      try {
+        metadata = JSON.parse(meta);
+      } catch {
+        this.setToast('error', 'Model metadata must be valid JSON.');
+        return;
+      }
+    }
+    const dimsRaw = this.modelForm.value.embedding_dims as string;
+    const embedding_dims = dimsRaw ? Number(dimsRaw) : undefined;
+
+    this.api
+      .createModel({
+        name: this.modelForm.value.name as string,
+        provider: this.modelForm.value.provider as string,
+        version: this.modelForm.value.version as string,
+        model_type: (this.modelForm.value.model_type as string) || 'llm',
+        embedding_dims: Number.isNaN(embedding_dims) ? undefined : embedding_dims,
+        metadata,
+      })
+      .subscribe({
+        next: () => {
+          this.setToast('success', 'Model saved.');
+          this.modelForm.reset({ model_type: 'llm', metadata: '' });
+          this.loadRegistry();
+        },
+        error: () => this.setToast('error', 'Unable to save model.'),
+      });
+  }
+
+  organizationName(orgId?: string | null): string {
+    const target = orgId || this.selectedOrgId;
+    if (!target) return '';
+    const org = this.organizations.find((o) => o.id === target);
+    return org ? org.name : '';
   }
 }

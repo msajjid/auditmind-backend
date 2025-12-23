@@ -3,6 +3,8 @@
 from typing import Iterable, Optional
 from uuid import UUID
 
+from django.core.files.uploadedfile import UploadedFile
+
 from audit_api.models import Evidence, Organization
 from audit_api.services.storage_service import EvidenceStorageService
 from audit_api.services.preprocessing_service import EvidencePreprocessingService
@@ -58,6 +60,49 @@ class EvidenceService:
         )
 
         evidence.save(update_fields=["storage_path", "file_size", "extracted_text"])
+        return evidence
+
+    def create_from_file(
+        self,
+        *,
+        organization_id: UUID,
+        uploaded_by: Optional[UUID],
+        file: UploadedFile,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        evidence_type_id: Optional[str] = None,
+        source_type_id: Optional[str] = None,
+    ) -> Evidence:
+        org = Organization.objects.get(id=organization_id)
+        data = file.read() or b""
+
+        evidence = Evidence.objects.create(
+            organization=org,
+            uploaded_by_id=uploaded_by,
+            title=title or (file.name or "Uploaded evidence"),
+            description=description,
+            evidence_type_id=evidence_type_id,
+            source_type_id=source_type_id,
+            status="uploaded",
+        )
+
+        storage_uri, computed_size, checksum = self.storage.write_uploaded_file(
+            org.id,
+            evidence.id,
+            filename=file.name or "upload.bin",
+            data=data,
+        )
+
+        extracted_text = self.preprocessing.extract_text_from_file(
+            filename=file.name or "",
+            data=data,
+        )
+
+        evidence.storage_path = storage_uri
+        evidence.file_size = computed_size
+        evidence.checksum = checksum
+        evidence.extracted_text = extracted_text
+        evidence.save(update_fields=["storage_path", "file_size", "checksum", "extracted_text"])
         return evidence
 
     def list_by_org(self, organization_id: UUID) -> Iterable[Evidence]:

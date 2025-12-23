@@ -26,11 +26,13 @@ class TaskService:
         framework_id: Optional[UUID] = None,
         control_id: Optional[UUID] = None,
         assignee_id: Optional[UUID] = None,
+        evidence_id: Optional[UUID] = None,
     ) -> Task:
         return Task.objects.create(
             organization_id=organization_id,
             framework_id=framework_id,
             control_id=control_id,
+            evidence_id=evidence_id,
             title=title,
             description=description,
             assignee_id=assignee_id,

@@ -8,3 +8,5 @@ passlib[bcrypt]
 django
 djangorestframework
 pgvector
+rq
+django-rq

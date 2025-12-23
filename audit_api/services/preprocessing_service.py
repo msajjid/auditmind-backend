@@ -1,19 +1,6 @@
-import json
-
-class EvidencePreprocessingService:
-    def extract_text(self, *, raw_text: str | None, raw_json: object | None) -> str:
-        # For now, deterministic:
-        # - if JSON: pretty string
-        # - else: raw_text
-        if raw_json is not None:
-            return json.dumps(raw_json, ensure_ascii=False, indent=2)
-        return (raw_text or "").strip()
-    
-
-
-
 import hashlib
 import json
+import mimetypes
 from typing import Any
 
 
@@ -55,6 +42,32 @@ class EvidencePreprocessingService:
             return self._cap(text)
 
         return self._cap((raw_text or "").strip())
+
+    def extract_text_from_file(self, *, filename: str, data: bytes) -> str:
+        """Best-effort extraction for uploaded files (text/json)."""
+        name = (filename or "").lower()
+        mime, _ = mimetypes.guess_type(name)
+
+        # Try JSON first if hinted by extension or MIME type.
+        if name.endswith(".json") or (mime and mime == "application/json"):
+            try:
+                decoded = data.decode("utf-8", errors="ignore")
+                parsed = json.loads(decoded)
+                return self.extract_text(raw_text=None, raw_json=parsed)
+            except Exception:
+                pass
+
+        # Text-like files: decode and trim.
+        if name.endswith((".txt", ".md", ".log", ".csv")) or (mime and mime.startswith("text/")):
+            return self._cap(data.decode("utf-8", errors="ignore").strip())
+
+        # Fallback: attempt utf-8 then latin-1 decode.
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("latin-1", errors="ignore")
+
+        return self._cap(text.strip())
 
     def content_hash(self, text: str) -> str:
         """Stable hash used to reuse classifications for identical payloads."""

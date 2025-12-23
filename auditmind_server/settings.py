@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'pgvector.django',
     'rest_framework',
+    'django_rq',
     'audit_api',
 ]
 
@@ -138,9 +139,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+}
+
+# RQ (async tasks)
+RQ_QUEUES = {
+    "default": {
+        "URL": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
+        "DEFAULT_TIMEOUT": 600,
+    },
 }
