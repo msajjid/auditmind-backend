@@ -315,11 +315,17 @@
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(122, 240, 183, 0.8);
-  color: #0f3c2c;
-  background: rgba(122, 240, 183, 0.16);
+  color: var(--text);
+  background: rgba(122, 240, 183, 0.18);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  box-shadow: 0 0 0 1px rgba(122, 240, 183, 0.12);
+}
+
+:root[data-theme='dark'] .active-badge {
+  background: rgba(122, 240, 183, 0.26);
+  border-color: rgba(122, 240, 183, 0.9);
 }
 
 .form {

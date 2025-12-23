@@ -1,0 +1,2 @@
+Risk mitigation (SOC2-CC9.1) uses least-privilege IAM roles, quarterly access attestations, and service account key audits.
+Logical access security (SOC2-CC6.1) blocks public S3 buckets, enforces MFA for admin roles, and rotates credentials.

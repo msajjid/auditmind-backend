@@ -1,0 +1,62 @@
+AuditMind end-to-end flow (registration → auto task creation)
+============================================================
+
+1) Identities and org setup
+- Register (POST /api/auth/register/): creates Django auth user, a new organization, and an admin OrganizationMembership. Returns DRF token plus memberships and active org id. Login (POST /api/auth/login/) reuses the auth user and returns the token + memberships. Token auth is required for subsequent API calls.
+- Organizations: stored in audit_api/models/organization.py. Memberships tie auth users to orgs with roles (admin/member/viewer) in organization_membership.py. These roles gate evidence/task actions in views.py.
+
+2) Evidence ingestion paths
+- JSON/text payload: POST /api/evidence/ with organization_id and raw_text or raw_json. EvidenceService.create_from_payload stores a row in evidence.py (status=uploaded) and writes the payload under local://uploads/<org>/<evidence>/raw.(json|txt) via EvidenceStorageService -> settings.EVIDENCE_UPLOAD_DIR (var/uploads by default). Extracted, capped text is computed by EvidencePreprocessingService.extract_text and saved on the evidence record.
+- File upload: POST /api/evidence/upload/ with multipart file. EvidenceService.create_from_file saves the file to var/uploads, computes sha256 checksum, extracts text (best-effort JSON/text fallback) into evidence.extracted_text.
+- Both flows auto-trigger classification synchronously after the evidence is created (unless the caller asks for async on the classify endpoint).
+
+3) Classification orchestration
+- Entry: OrchestrationCoordinator.classify_evidence -> WorkflowEngine.run_evidence_classification -> EvidenceClassifierAgent.classify. This is called automatically on evidence creation or manually via POST /api/evidence/<id>/classify/ (with ?async=1 to enqueue on django_rq).
+- Pipeline logging: PipelineLogger wraps the run. It creates AiPipelineRun + AgentRun rows and AgentStepLog rows per step; emits Event rows for milestones. Runs/steps/events can be fetched via /api/evidence/<id>/agent-runs/, /api/agent-runs/<agent_run_id>/steps/, /api/evidence/<id>/events/, or /api/evidence/<id>/timeline/.
+
+4) Pipeline steps (EvidenceClassifierAgent)
+- preprocessing: Build text from title/description/type/source/extracted_text plus AWS-specific hints. Compute content_hash (sha256). Log sizes and emit EvidencePreprocessed.
+- cache_lookup: ClassificationCacheService checks for an EvidenceEmbedding with matching hash (exact reuse) or nearest neighbor via pgvector L2 distance <= 0.30. If hit, returns cached primary_controls/confidence/pipeline_run_id; marks ai_classification on evidence and exits early.
+- candidate_retrieval_fts: ControlSearchService runs Postgres full-text search (weighted SearchVector on reference/title/description) to get top 5 Control candidates.
+- control_ranking + thresholding: Keep candidates with score >= 0.01. If none, fallback to primary_controls=["control:GENERIC"], confidence=0.8. Otherwise use up to 3 best controls; confidence = min(0.95, 0.5 + top_score*0.5).
+- llm_validation (stub): LLMValidationService currently returns the same confidence with justification "stub". This keeps the slot where a real LLM verifier/reranker would live.
+- persistence: Store ClassifierOutput linked to the AiPipelineRun and Evidence (primary_controls, confidence, raw candidate data). Emit ClassificationCompleted event. Evidence.ai_classification is updated with controls/confidence and pipeline metadata.
+- auto_task_creation: TaskAutoCreateService makes Task rows for each matched Control (one per org/control/title to avoid duplicates), links to framework/control/evidence, status=open, and enqueues background processing stub (process_task_task) via django_rq. Tasks are listed via /api/tasks/?organization_id=...
+- embedding_store: EmbeddingService computes a deterministic 128-dim hash-based vector, upserts EvidenceEmbedding (vector + content_hash + model_name), and emits EmbeddingComputed. This enables future cache hits on similar/identical evidence.
+
+5) Data stores and persistence layout
+- Database (Postgres): core tables for evidence, controls/frameworks, tasks, users/orgs/memberships, pipeline runs/agent runs/step logs/events, classifier outputs, embeddings (pgvector), prompt templates, model registry. Ordering and indexes are defined in each model file in audit_api/models/.
+- Filesystem: var/uploads/<org>/<evidence>/ holds raw payloads and uploads; var/ is writable runtime storage. Evidence.storage_path records a local:// URI to the saved file.
+- Caching: ClassificationCacheService uses EvidenceEmbedding vectors for similarity reuse; threshold is distance <= 0.30 on normalized vectors. Exact content_hash match short-circuits to a reused classification.
+
+6) Control catalog and retrieval
+- Controls live in controls table (control.py) linked to frameworks (framework.py). SOC 2 controls are seeded via management command seed_soc2_controls.py. ControlSearchService performs weighted FTS against reference/title/description to retrieve candidates for ranking.
+
+7) Background/async behavior
+- Classification: POST /api/evidence/<id>/classify/?async=1 enqueues classify_evidence_task on django_rq (Redis-backed). Synchronous calls run inline.
+- Task downstream: process_task_task is a stub that acknowledges created tasks; hooks exist to push tickets/notifications without blocking classification.
+- Job status: /api/jobs/<job_id>/ returns RQ job state/result/error.
+
+8) LLM and embedding extension points (beyond stub)
+- Embeddings: EmbeddingService.embed_vector is a deterministic hash stub (hash-embed-128). Swap this with a real provider (OpenAI/Cohere/etc.) but keep model_dim consistent with EvidenceEmbedding.vector (currently 128) or migrate schema. Upsert path is centralized in EmbeddingService.upsert_embedding.
+- LLM validation: LLMValidationService.validate is a no-op stub. Replace with a call that scores control relevance or rewrites primary_controls/confidence. Prompt templates and model choices can be stored in prompt_templates and model_registry tables; pipeline already records model/prompt metadata in AiPipelineRun.details.
+- Model registry: model_registry.py tracks available models (name/provider/version/type/metadata/embedding_dims). Use this to configure which LLM/embedding model to call and record runs.
+- Prompt templates: prompt.py stores named, versioned prompt bodies for reproducibility.
+
+9) Preprocessing and data hygiene
+- EvidencePreprocessingService caps extracted text at 200k chars to keep rows bounded. JSON payloads are pretty-printed deterministically; raw strings are hashed for content_hash reuse. File ingestion attempts JSON decode based on extension/MIME, then text decode with utf-8/latin-1 fallbacks.
+- Storage paths and checksums are computed for uploads; evidence.status starts as "uploaded" and ai_classification is attached after pipeline completion.
+
+10) Observability surfaces
+- Agent runs and step logs show each pipeline stage timings and snapshots. Events capture high-level milestones (EvidencePreprocessed, ClassificationCompleted, EmbeddingComputed). Evidence.ai_classification stores the latest classification summary alongside pipeline_run_id and agent_run_id for quick reads.
+
+11) Organization and authorization touchpoints
+- Role checks: Evidence and Task endpoints gate actions using OrganizationMembership roles (admin/member/viewer). Register auto-creates admin membership; additional orgs can be created via POST /api/organizations/ (admins), and memberships managed via /api/organizations/<org>/memberships/ endpoints.
+
+12) High-level happy path
+- User registers → receives token + org.
+- User uploads evidence (text/json/file) to their org.
+- Evidence saved to DB + var/uploads; text extracted and hashed.
+- Classification pipeline runs (sync or queued):
+  preprocessing → cache_lookup → FTS retrieval → threshold/rank → LLM validation stub → persist outputs → auto-create tasks → store embedding.
+- Evidence.ai_classification populated; tasks appear in tasks list; pipeline logs + events available for auditability; embeddings cached for reuse on similar evidence.

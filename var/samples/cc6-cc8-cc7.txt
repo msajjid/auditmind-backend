@@ -1,0 +1,3 @@
+Logical access security (SOC2-CC6.1) enforced via Okta SSO + AWS IAM with MFA, 90-day key rotation, and no public S3 buckets.
+Change management (SOC2-CC8.1) requires GitHub PR approvals, CI checks, and staging deploys before production via ArgoCD.
+System operations (SOC2-CC7.1) rely on PagerDuty on-call rotations, runbooks, and alert tuning for log/SIEM signals.

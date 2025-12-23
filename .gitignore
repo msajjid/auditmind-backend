@@ -7,6 +7,16 @@ __pycache__/
 *.pyc
 .env
 var/*
+!var/processed/
+!var/uploads/
+!var/samples/
+!var/samples/**
+
+var/processed/*
+!var/processed/.gitkeep
+
+var/uploads/*
+!var/uploads/.gitkeep
 
 # Django
 *.log

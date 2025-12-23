@@ -1,0 +1,3 @@
+Quarterly risk assessments with owner signoff are performed and documented (SOC2-CC3.1).
+Control activities include quarterly access reviews, SOX change approvals, and separation of duties (SOC2-CC5.1).
+Monitoring activities (SOC2-CC4.1) include weekly control health checks, SIEM dashboards, and control owner reviews.

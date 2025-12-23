@@ -1,0 +1,10 @@
+{
+  "summary": "Quarterly access reviews and change approvals",
+  "framework": "SOC2",
+  "controls": ["SOC2-CC6.1", "SOC2-CC8.1", "SOC2-CC7.1"],
+  "details": {
+    "access_reviews": "IAM + Okta accounts reviewed quarterly, privileged roles require MFA",
+    "change_mgmt": "GitHub PR approvals + CI checks before ArgoCD deploys",
+    "ops": "PagerDuty on-call with runbooks and alerting tuned per service"
+  }
+}
